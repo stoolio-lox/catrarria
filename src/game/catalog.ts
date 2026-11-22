@@ -365,6 +365,16 @@ export const ITEMS: Record<string, ItemDef> = {
     color: '#a16207',
     accent: '#fde68a',
   },
+  chest_item: {
+    id: 'chest_item',
+    name: 'Сундук сокровищ',
+    category: 'block',
+    maxStack: 20,
+    description: 'Вместительный сундук для хранения трофеев. ПКМ — открыть.',
+    placesTile: TileType.Chest,
+    color: '#b45309',
+    accent: '#facc15',
+  },
   wood_wall: {
     id: 'wood_wall',
     name: 'Задняя стена (доски)',
@@ -525,6 +535,60 @@ export const ITEMS: Record<string, ItemDef> = {
     color: '#10b981',
     accent: '#a7f3d0',
   },
+
+  // === BOSS SUMMONERS ===
+  summon_king_slime: {
+    id: 'summon_king_slime',
+    name: 'Желейная корона',
+    category: 'summon',
+    maxStack: 10,
+    description: 'Призывает Короля Слизней-Котов! Нажми ЛКМ или ПКМ в руке.',
+    summonsBoss: 'king_slime',
+    color: '#22c55e',
+    accent: '#facc15',
+  },
+  summon_kotulhu: {
+    id: 'summon_kotulhu',
+    name: 'Галстук Котулху',
+    category: 'summon',
+    maxStack: 10,
+    description: 'Призывает Котулху! Базовая призывалка из сундука.',
+    summonsBoss: 'kotulhu',
+    textureSrc: '/assets/aistudio/wait_518dc071.jpg',
+    color: '#dc2626',
+    accent: '#fca5a5',
+  },
+  summon_cat_worm: {
+    id: 'summon_cat_worm',
+    name: 'Шляпа Котового Червя',
+    category: 'summon',
+    maxStack: 10,
+    description: 'Призывает Пожирателя Котов (Котового Червя)! Нажми ЛКМ или ПКМ.',
+    summonsBoss: 'cat_worm',
+    textureSrc: '/assets/aistudio/chine_5a03a968.jpg',
+    color: '#d97706',
+    accent: '#fde68a',
+  },
+  summon_skele_cat: {
+    id: 'summon_skele_cat',
+    name: 'Проклятый Кото-череп',
+    category: 'summon',
+    maxStack: 10,
+    description: 'Призывает Кототрона с костяными лапами!',
+    summonsBoss: 'skele_cat',
+    color: '#e2e8f0',
+    accent: '#a855f7',
+  },
+  summon_eye_boss: {
+    id: 'summon_eye_boss',
+    name: 'Подозрительное Око',
+    category: 'summon',
+    maxStack: 10,
+    description: 'Призывает Око Ночи — ночного стража небес.',
+    summonsBoss: 'eye_boss',
+    color: '#991b1b',
+    accent: '#f87171',
+  },
 };
 
 export const RECIPES: CraftingRecipe[] = [
@@ -598,6 +662,17 @@ export const RECIPES: CraftingRecipe[] = [
     station: 'hand',
     category: 'building',
     ingredients: [{ itemId: 'planks_block', count: 4 }],
+  },
+  {
+    id: 'craft_chest',
+    resultId: 'chest_item',
+    resultCount: 1,
+    station: 'workbench',
+    category: 'building',
+    ingredients: [
+      { itemId: 'planks_block', count: 8 },
+      { itemId: 'iron_bar', count: 2 },
+    ],
   },
 
   // Workbench recipes
@@ -866,6 +941,63 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'ruby_gem', count: 1 },
     ],
   },
+
+  // Boss summoners
+  {
+    id: 'craft_summon_king_slime',
+    resultId: 'summon_king_slime',
+    resultCount: 1,
+    station: 'workbench',
+    category: 'potions',
+    ingredients: [
+      { itemId: 'slime_gel', count: 12 },
+      { itemId: 'gold_bar', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_summon_kotulhu',
+    resultId: 'summon_kotulhu',
+    resultCount: 1,
+    station: 'workbench',
+    category: 'potions',
+    ingredients: [
+      { itemId: 'slime_gel', count: 6 },
+      { itemId: 'iron_bar', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_summon_cat_worm',
+    resultId: 'summon_cat_worm',
+    resultCount: 1,
+    station: 'workbench',
+    category: 'potions',
+    ingredients: [
+      { itemId: 'monster_bone', count: 6 },
+      { itemId: 'slime_gel', count: 6 },
+    ],
+  },
+  {
+    id: 'craft_summon_skele_cat',
+    resultId: 'summon_skele_cat',
+    resultCount: 1,
+    station: 'anvil',
+    category: 'potions',
+    ingredients: [
+      { itemId: 'monster_bone', count: 12 },
+      { itemId: 'ruby_gem', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_summon_eye_boss',
+    resultId: 'summon_eye_boss',
+    resultCount: 1,
+    station: 'workbench',
+    category: 'potions',
+    ingredients: [
+      { itemId: 'slime_gel', count: 8 },
+      { itemId: 'ruby_gem', count: 1 },
+    ],
+  },
 ];
 
 export const STATION_NAMES: Record<CraftingStation, string> = {
@@ -1106,6 +1238,8 @@ export function tileTypeToDropItem(tile: TileType): string | null {
       return 'roof_tile';
     case TileType.Stool:
       return 'stool_item';
+    case TileType.Chest:
+      return 'chest_item';
     default:
       return null;
   }

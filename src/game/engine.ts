@@ -14,6 +14,7 @@ import {
   computeDamageAfterDefense,
   createEnemy,
   createInitialPlayer,
+  isBossKind,
   moveEntityWithTiles,
   rectsOverlap,
   stepEnemyAI,
@@ -22,12 +23,14 @@ import {
   tryPlaceItemAtTile,
 } from './physics';
 import { LoadedTextures, loadGameTextures, renderGameFrame } from './renderer';
+import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings';
 import {
   DropEntity,
   EnemyEntity,
   EnemyKind,
   FloatingText,
   GamePhase,
+  GameSettings,
   HudSnapshot,
   InventorySlot,
   Particle,
@@ -45,6 +48,7 @@ import {
   isInsideValidHouse,
   isTileSolid,
   recomputeLighting,
+  tileIndex,
 } from './worldGen';
 
 const PARTICLE_POOL_SIZE = 180;
@@ -95,6 +99,8 @@ export class KotarriaEngine {
   private bossSpawnedDay = 0;
   public godMode = false;
   public uiModalOpen = false;
+  public settings: GameSettings = { ...DEFAULT_SETTINGS };
+  public activeChestCoords: { tx: number; ty: number } | null = null;
   public stoolPetted = false;
   public stoolSpeech: {
     stage: 'petted' | 'copied';
@@ -142,6 +148,14 @@ export class KotarriaEngine {
       });
     }
 
+    this.settings = loadSettings();
+    sound.applySettings({
+      musicEnabled: this.settings.musicEnabled,
+      musicVolume: this.settings.musicVolume,
+      sfxEnabled: this.settings.sfxEnabled,
+      sfxVolume: this.settings.sfxVolume,
+    });
+
     this.world = generateWorld(42069);
     this.player = createInitialPlayer(this.world);
     const inv = createStarterInventory();
@@ -172,11 +186,15 @@ export class KotarriaEngine {
     this.emitHud(true);
   }
 
+  private shouldPauseSimulation(): boolean {
+    return this.uiModalOpen && this.settings.autopauseInMenus;
+  }
+
   private ensureLoopRunning(): void {
     if (
       this.rafId === null &&
       this.canvas &&
-      (this.phase === 'title' || (this.phase === 'playing' && !this.uiModalOpen))
+      (this.phase === 'title' || (this.phase === 'playing' && !this.shouldPauseSimulation()))
     ) {
       this.lastTimestamp = performance.now();
       this.rafId = requestAnimationFrame(this.loop);
@@ -188,6 +206,8 @@ export class KotarriaEngine {
     this.uiModalOpen = open;
     if (open) {
       this.clearInputs();
+    }
+    if (this.shouldPauseSimulation()) {
       if (this.rafId !== null) {
         cancelAnimationFrame(this.rafId);
         this.rafId = null;
@@ -196,6 +216,47 @@ export class KotarriaEngine {
     } else if (this.phase === 'playing') {
       this.ensureLoopRunning();
     }
+  }
+
+  public applySettings(next: GameSettings): void {
+    this.settings = { ...next };
+    saveSettings(this.settings);
+    sound.applySettings({
+      musicEnabled: this.settings.musicEnabled,
+      musicVolume: this.settings.musicVolume,
+      sfxEnabled: this.settings.sfxEnabled,
+      sfxVolume: this.settings.sfxVolume,
+    });
+    this.syncMusicTheme();
+    if (this.shouldPauseSimulation()) {
+      if (this.rafId !== null) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = null;
+      }
+    } else if (this.phase === 'playing') {
+      this.ensureLoopRunning();
+    }
+  }
+
+  private syncMusicTheme(): void {
+    if (this.phase === 'title') {
+      sound.setMusicTheme('title');
+      return;
+    }
+    if (this.phase !== 'playing') {
+      sound.setMusicTheme('none');
+      return;
+    }
+    const hasBoss = this.enemies.some((e) => isBossKind(e.kind) && e.aiState !== 'ko');
+    if (hasBoss) {
+      sound.setMusicTheme('boss');
+      return;
+    }
+    const isNight = this.timeOfDay >= 0.55 || this.timeOfDay < 0.08;
+    const pxTile = Math.max(0, Math.min(this.world.width - 1, Math.floor((this.player.x + this.player.width / 2) / TILE_SIZE)));
+    const feetTileY = Math.round((this.player.y + this.player.height) / TILE_SIZE);
+    const underground = feetTileY - this.world.surfaceHeights[pxTile] > 6;
+    sound.setMusicTheme(isNight || underground ? 'night' : 'day');
   }
 
   public detach(): void {
@@ -243,6 +304,7 @@ export class KotarriaEngine {
       this.centerCameraImmediate();
       this.ensureLoopRunning();
     } else if (next === 'title') {
+      this.activeChestCoords = null;
       this.ensureLoopRunning();
     } else {
       if (this.rafId !== null) {
@@ -251,10 +313,12 @@ export class KotarriaEngine {
       }
       this.render();
     }
+    this.syncMusicTheme();
     this.emitHud(true);
   }
 
   public startNewGame(): void {
+    sound.unlock();
     this.world = generateWorld(Math.floor(Date.now() % 100000) + 777);
     this.player = createInitialPlayer(this.world);
     const inv = createStarterInventory();
@@ -272,6 +336,7 @@ export class KotarriaEngine {
     this.bossSpawnedDay = 0;
     this.godMode = false;
     this.uiModalOpen = false;
+    this.activeChestCoords = null;
     this.stoolPetted = false;
     this.stoolSpeech = null;
     this.stats = {
@@ -284,7 +349,7 @@ export class KotarriaEngine {
     };
     this.syncActiveWeapon();
     this.spawnStarterCreatures();
-    this.showToast('Добро пожаловать в Котаррию! Построй дом и скрафти оружие.');
+    this.showToast('Добро пожаловать в Котаррию! Ищи сундуки по бокам от спавна!');
     this.setPhase('playing');
   }
 
@@ -296,6 +361,7 @@ export class KotarriaEngine {
   }
 
   public handleKeyDown(code: string): void {
+    sound.unlock();
     if (code === 'Space' || code === 'KeyW' || code === 'ArrowUp') {
       if (!this.keys.has(code)) {
         this.jumpJustPressed = true;
@@ -311,7 +377,9 @@ export class KotarriaEngine {
     } else if (code === 'KeyB') {
       this.toggleToolMode();
     } else if (code === 'KeyF') {
-      this.petNearestStool();
+      if (!this.openNearestChest()) {
+        this.petNearestStool();
+      }
     } else if (code === 'KeyQ') {
       const dropAll = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
       this.dropSelectedHotbarItem(dropAll);
@@ -330,6 +398,7 @@ export class KotarriaEngine {
   }
 
   public handleMouseDown(button: number, clientX: number, clientY: number): void {
+    sound.unlock();
     this.handleMouseMove(clientX, clientY);
     if (button === 0) this.mouseLeftDown = true;
     if (button === 2) this.mouseRightDown = true;
@@ -468,19 +537,144 @@ export class KotarriaEngine {
     return true;
   }
 
-  public summonNightBoss(): void {
-    if (this.phase !== 'playing') return;
-    if (this.enemies.some((e) => e.kind === 'eye_boss')) return;
+  public summonBoss(kind: EnemyKind, consumeSelectedSlot = false): boolean {
+    if (this.phase !== 'playing') return false;
+    if (!isBossKind(kind)) return false;
+
+    const existing = this.enemies.find((e) => e.kind === kind && e.aiState !== 'ko');
+    if (existing) {
+      this.showToast(`${existing.name} уже на арене!`);
+      return false;
+    }
+
+    if (consumeSelectedSlot) {
+      const slot = this.hotbar[this.selectedSlot];
+      if (!slot || slot.count <= 0) return false;
+      slot.count--;
+      if (slot.count <= 0) {
+        this.hotbar[this.selectedSlot] = null;
+        this.syncActiveWeapon();
+      }
+    }
+
+    const spawnOffsetY = kind === 'king_slime' ? -60 : kind === 'cat_worm' ? 140 : -180;
     const boss = createEnemy(
       this.nextEntityId++,
-      'eye_boss',
-      this.player.x + 260 * this.player.facing,
-      this.player.y - 180,
+      kind,
+      this.player.x + 250 * this.player.facing,
+      this.player.y + spawnOffsetY,
       1 + (this.dayCount - 1) * 0.15,
     );
     this.enemies.push(boss);
-    this.showToast('Око Ночи пробудилось!');
-    this.emitHud();
+    sound.playBossRoar();
+    this.trauma = Math.min(1, this.trauma + 0.5);
+    this.showToast(`${boss.name} пробудился!`);
+    this.syncMusicTheme();
+    this.emitHud(true);
+    return true;
+  }
+
+  public summonNightBoss(): void {
+    this.summonBoss('eye_boss', false);
+  }
+
+  private findNearestChestTile(maxDistTiles = 4.5): { tx: number; ty: number; hasLoot: boolean } | null {
+    const pcx = this.player.x + this.player.width / 2;
+    const pcy = this.player.y + this.player.height / 2;
+    const ptx = Math.floor(pcx / TILE_SIZE);
+    const pty = Math.floor(pcy / TILE_SIZE);
+    const r = Math.ceil(maxDistTiles);
+    let best: { tx: number; ty: number; hasLoot: boolean } | null = null;
+    let bestDist = Infinity;
+
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const tx = ptx + dx;
+        const ty = pty + dy;
+        if (getTile(this.world, tx, ty) === TileType.Chest) {
+          const dist = Math.hypot((tx + 0.5) * TILE_SIZE - pcx, (ty + 0.5) * TILE_SIZE - pcy);
+          if (dist <= maxDistTiles * TILE_SIZE && dist < bestDist) {
+            bestDist = dist;
+            const idx = tileIndex(tx, ty, this.world.width);
+            best = { tx, ty, hasLoot: (this.world.chests[idx]?.length ?? 0) > 0 };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  public openChest(tx: number, ty: number): void {
+    if (getTile(this.world, tx, ty) !== TileType.Chest) return;
+    const idx = tileIndex(tx, ty, this.world.width);
+    if (!this.world.chests[idx]) {
+      this.world.chests[idx] = [];
+    }
+    this.activeChestCoords = { tx, ty };
+    sound.playChestOpen();
+    this.emitHud(true);
+  }
+
+  public openNearestChest(): boolean {
+    const chest = this.findNearestChestTile(4.5);
+    if (!chest) return false;
+    this.openChest(chest.tx, chest.ty);
+    return true;
+  }
+
+  public closeChest(): void {
+    this.activeChestCoords = null;
+    this.emitHud(true);
+  }
+
+  public takeChestItem(itemIdx: number): void {
+    if (!this.activeChestCoords) return;
+    const key = tileIndex(this.activeChestCoords.tx, this.activeChestCoords.ty, this.world.width);
+    const items = this.world.chests[key];
+    if (!items || itemIdx < 0 || itemIdx >= items.length) return;
+    const slot = items[itemIdx];
+    const leftover = addItemToInventory(this.hotbar, this.backpack, slot.itemId, slot.count);
+    const taken = slot.count - leftover;
+    if (taken > 0) {
+      sound.playPickup();
+      const def = ITEMS[slot.itemId];
+      this.showToast(`Взято из сундука: ${def?.name ?? slot.itemId} ×${taken}`);
+    }
+    if (leftover <= 0) {
+      items.splice(itemIdx, 1);
+    } else {
+      slot.count = leftover;
+      this.showToast('Инвентарь полон!');
+    }
+    this.syncActiveWeapon();
+    this.emitHud(true);
+  }
+
+  public takeAllChestLoot(): void {
+    if (!this.activeChestCoords) return;
+    const key = tileIndex(this.activeChestCoords.tx, this.activeChestCoords.ty, this.world.width);
+    const items = this.world.chests[key];
+    if (!items || items.length === 0) return;
+
+    let takenAny = false;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const slot = items[i];
+      const leftover = addItemToInventory(this.hotbar, this.backpack, slot.itemId, slot.count);
+      if (leftover < slot.count) {
+        takenAny = true;
+      }
+      if (leftover <= 0) {
+        items.splice(i, 1);
+      } else {
+        slot.count = leftover;
+      }
+    }
+    if (takenAny) {
+      sound.playPickup();
+      this.showToast(items.length === 0 ? 'Сундук полностью собран!' : 'Часть предметов осталась (рюкзак полон).');
+    }
+    this.syncActiveWeapon();
+    this.emitHud(true);
   }
 
   private syncActiveWeapon(): void {
@@ -632,7 +826,7 @@ export class KotarriaEngine {
     this.emitHud(true);
   }
 
-  public giveDebugKit(kind: 'weapons' | 'resources' | 'stool'): void {
+  public giveDebugKit(kind: 'weapons' | 'resources' | 'stool' | 'summons'): void {
     if (kind === 'weapons') {
       const weaponIds = [
         'ruby_greatsword',
@@ -664,11 +858,24 @@ export class KotarriaEngine {
         ['workbench_item', 1],
         ['furnace_item', 1],
         ['anvil_item', 1],
+        ['chest_item', 2],
       ];
       for (const [id, cnt] of mats) {
         addItemToInventory(this.hotbar, this.backpack, id, cnt);
       }
       this.showToast('Дебаг: Выданы ресурсы и станции!');
+    } else if (kind === 'summons') {
+      const summons = [
+        'summon_king_slime',
+        'summon_kotulhu',
+        'summon_cat_worm',
+        'summon_skele_cat',
+        'summon_eye_boss',
+      ];
+      for (const id of summons) {
+        addItemToInventory(this.hotbar, this.backpack, id, 2);
+      }
+      this.showToast('Дебаг: Выданы все призывалки боссов!');
     } else {
       addItemToInventory(this.hotbar, this.backpack, 'stool_item', 1);
       this.showToast('Дебаг: Табуретка добавлена в инвентарь!');
@@ -678,11 +885,15 @@ export class KotarriaEngine {
   }
 
   public spawnDebugEnemy(kind: EnemyKind): void {
+    if (isBossKind(kind)) {
+      this.summonBoss(kind, false);
+      return;
+    }
     const enemy = createEnemy(
       this.nextEntityId++,
       kind,
       this.player.x + 170 * this.player.facing,
-      this.player.y - (kind === 'bat' || kind === 'eye_boss' ? 120 : 20),
+      this.player.y - (kind === 'bat' ? 120 : 20),
       1 + (this.dayCount - 1) * 0.15,
     );
     this.enemies.push(enemy);
@@ -723,6 +934,7 @@ export class KotarriaEngine {
     life = 0.45,
     gravity = 320,
   ): void {
+    if (!this.settings.particlesEnabled) return;
     const p = this.particles[this.particleCursor];
     this.particleCursor = (this.particleCursor + 1) % PARTICLE_POOL_SIZE;
     p.active = true;
@@ -768,7 +980,7 @@ export class KotarriaEngine {
 
   private loop = (now: number): void => {
     this.rafId = null;
-    if (this.phase !== 'title' && (this.phase !== 'playing' || this.uiModalOpen)) {
+    if (this.phase !== 'title' && (this.phase !== 'playing' || this.shouldPauseSimulation())) {
       return;
     }
 
@@ -950,6 +1162,9 @@ export class KotarriaEngine {
     // Update drops & magnet pickup
     this.stepDrops(dt);
 
+    // Sync adaptive Terraria-style music theme
+    this.syncMusicTheme();
+
     // Emit throttled HUD snapshot
     this.hudEmitTimer -= dt;
     if (this.hudEmitTimer <= 0) {
@@ -978,7 +1193,12 @@ export class KotarriaEngine {
     const wantPlace = this.mouseRightDown || (this.mouseLeftDown && this.activeToolMode === 'build');
     const wantPrimary = this.mouseLeftDown && this.activeToolMode !== 'build';
 
-    // Right-clicking the stool works regardless of currently held item
+    // Right-clicking a chest or stool works regardless of currently held item
+    if (this.mouseRightDown && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Chest) {
+      this.openChest(tx, ty);
+      this.placeCooldown = 0.35;
+      return;
+    }
     if (this.mouseRightDown && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Stool) {
       this.interactStoolRightClick(tx, ty);
       this.placeCooldown = 0.35;
@@ -989,6 +1209,11 @@ export class KotarriaEngine {
       if (item?.category === 'consumable') {
         this.useSelectedConsumable();
         this.placeCooldown = 0.3;
+        return;
+      }
+      if (item?.category === 'summon' && item.summonsBoss) {
+        this.summonBoss(item.summonsBoss, true);
+        this.placeCooldown = 0.5;
         return;
       }
       if (slot && item && (item.placesTile !== undefined || item.placesWall !== undefined)) {
@@ -1015,6 +1240,9 @@ export class KotarriaEngine {
         } else if (res.action === 'stool_interact') {
           this.interactStoolRightClick(tx, ty);
           this.placeCooldown = 0.35;
+        } else if (res.action === 'chest_open') {
+          this.openChest(tx, ty);
+          this.placeCooldown = 0.35;
         }
         return;
       }
@@ -1036,6 +1264,12 @@ export class KotarriaEngine {
         return;
       }
 
+      if (item.category === 'summon' && item.summonsBoss) {
+        this.summonBoss(item.summonsBoss, true);
+        this.attackCooldown = 0.5;
+        return;
+      }
+
       if (item.category === 'tool') {
         if (inRange) {
           const res = tryDamageTile(this.world, this.tileDamageMap, tx, ty, item.pickPower ?? 1);
@@ -1046,6 +1280,27 @@ export class KotarriaEngine {
               this.stats.blocksMined++;
               sound.playBlockBreak();
               this.spawnBurst(tileX, tileY, '#cbd5e1', 10, 140);
+              if (res.hitTile === TileType.Chest) {
+                const idx = tileIndex(tx, ty, this.world.width);
+                const chestItems = this.world.chests[idx] ?? [];
+                for (const cSlot of chestItems) {
+                  this.drops.push({
+                    id: this.nextEntityId++,
+                    itemId: cSlot.itemId,
+                    count: cSlot.count,
+                    x: tileX,
+                    y: tileY,
+                    vx: (Math.random() - 0.5) * 140,
+                    vy: -175,
+                    life: 60,
+                    pickupDelay: 0.25,
+                  });
+                }
+                delete this.world.chests[idx];
+                if (this.activeChestCoords?.tx === tx && this.activeChestCoords?.ty === ty) {
+                  this.activeChestCoords = null;
+                }
+              }
               if (res.droppedItemId) {
                 this.drops.push({
                   id: this.nextEntityId++,
@@ -1288,9 +1543,10 @@ export class KotarriaEngine {
       this.hitstopTimer = 0.045;
       this.trauma = Math.min(1, this.trauma + 0.45);
       this.stats.monstersKilled++;
-      if (enemy.kind === 'eye_boss') {
+      if (isBossKind(enemy.kind)) {
         this.stats.bossDefeated = true;
-        this.showToast('Око Ночи повержено! Слава Коту-Герою!');
+        this.showToast(`${enemy.name} повержен! Слава Коту-Герою!`);
+        this.syncMusicTheme();
       }
       this.spawnBurst(ex, ey, '#fb923c', 20, 210);
       for (const d of enemy.drops) {
@@ -1535,6 +1791,19 @@ export class KotarriaEngine {
         });
       }
 
+      if (aiRes.spawnMinionKind && this.enemies.length < 14) {
+        const minion = createEnemy(
+          this.nextEntityId++,
+          aiRes.spawnMinionKind,
+          enemy.x + enemy.width / 2,
+          enemy.y,
+          1,
+        );
+        minion.vy = -260;
+        minion.vx = (Math.random() - 0.5) * 180;
+        this.enemies.push(minion);
+      }
+
       if (enemy.aiState === 'ko') {
         if (enemy.koTimer <= 0) {
           this.enemies.splice(i, 1);
@@ -1544,7 +1813,7 @@ export class KotarriaEngine {
 
       // Despawn very far away regular mobs to keep action near player
       if (
-        enemy.kind !== 'eye_boss' &&
+        !isBossKind(enemy.kind) &&
         Math.hypot(enemy.x - this.player.x, enemy.y - this.player.y) > 1650
       ) {
         this.enemies.splice(i, 1);
@@ -1671,7 +1940,7 @@ export class KotarriaEngine {
     this.ctx.save();
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const shakeMag = this.trauma * this.trauma * 12;
+    const shakeMag = this.settings.screenShake ? this.trauma * this.trauma * 12 : 0;
     const shakeX = (Math.random() * 2 - 1) * shakeMag;
     const shakeY = (Math.random() * 2 - 1) * shakeMag;
     const { tx, ty, inRange } = this.getHoverWorldTile();
@@ -1712,8 +1981,23 @@ export class KotarriaEngine {
       0,
       Math.round((feetTileY - this.world.surfaceHeights[pxTile]) * 2),
     );
-    const boss = this.enemies.find((e) => e.kind === 'eye_boss' && e.aiState !== 'ko');
+    const boss = this.enemies.find((e) => isBossKind(e.kind) && e.aiState !== 'ko');
     const nearbyStool = this.findNearestStoolTile(4.5) !== null;
+    const nearbyChest = this.findNearestChestTile(4.5);
+    const activeChest =
+      this.activeChestCoords &&
+      getTile(this.world, this.activeChestCoords.tx, this.activeChestCoords.ty) === TileType.Chest
+        ? {
+            tx: this.activeChestCoords.tx,
+            ty: this.activeChestCoords.ty,
+            items: (
+              this.world.chests[
+                tileIndex(this.activeChestCoords.tx, this.activeChestCoords.ty, this.world.width)
+              ] ?? []
+            ).map((s) => ({ ...s })),
+          }
+        : null;
+
     return {
       phase: this.phase,
       hp: Math.round(this.player.hp),
@@ -1740,6 +2024,8 @@ export class KotarriaEngine {
       toastMessage: this.toastMessage,
       godMode: this.godMode,
       nearbyStool,
+      nearbyChest,
+      activeChest,
       stoolSpeech: this.stoolSpeech
         ? {
             stage: this.stoolSpeech.stage,
@@ -1755,6 +2041,11 @@ export class KotarriaEngine {
     const snap = this.getHudSnapshot();
     const hotbarKey = snap.hotbar.map((s) => (s ? `${s.itemId}:${s.count}` : '')).join(',');
     const backpackKey = snap.backpack.map((s) => (s ? `${s.itemId}:${s.count}` : '')).join(',');
+    const chestKey = snap.activeChest
+      ? `${snap.activeChest.tx},${snap.activeChest.ty}:${snap.activeChest.items
+          .map((s) => (s ? `${s.itemId}:${s.count}` : ''))
+          .join(',')}`
+      : '';
     const key = [
       snap.phase,
       snap.hp,
@@ -1767,7 +2058,7 @@ export class KotarriaEngine {
       snap.selectedSlot,
       snap.activeToolMode,
       snap.toastMessage ?? '',
-      snap.bossInfo ? `${snap.bossInfo.hp}` : '',
+      snap.bossInfo ? `${snap.bossInfo.name}:${snap.bossInfo.hp}` : '',
       snap.nearbyStations.join(','),
       hotbarKey,
       backpackKey,
@@ -1776,6 +2067,8 @@ export class KotarriaEngine {
       snap.stats.blocksPlaced,
       snap.godMode ? 1 : 0,
       snap.nearbyStool ? 1 : 0,
+      snap.nearbyChest ? `${snap.nearbyChest.tx},${snap.nearbyChest.ty}:${snap.nearbyChest.hasLoot ? 1 : 0}` : '',
+      chestKey,
       snap.stoolSpeech ? `${snap.stoolSpeech.stage}:${snap.stoolSpeech.text}` : '',
     ].join('|');
     if (!force && key === this.lastHudKey) return;

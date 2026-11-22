@@ -1,5 +1,6 @@
 import {
   CraftingStation,
+  InventorySlot,
   TILE_SIZE,
   TileType,
   WORLD_HEIGHT,
@@ -96,6 +97,7 @@ export function getTileMaxDamage(tile: TileType): number {
     case TileType.DoorClosed:
     case TileType.DoorOpen:
     case TileType.Bed:
+    case TileType.Chest:
       return 3;
     case TileType.Stool:
       return 2;
@@ -267,7 +269,96 @@ export function generateWorld(seed = 42069): WorldData {
   tiles[tileIndex(spawnX + 3, sySpawn - 1, width)] = TileType.Torch;
   tiles[tileIndex(spawnX + 2, sySpawn - 1, width)] = TileType.Stool;
 
-  const world: WorldData = { width, height, tiles, walls, surfaceHeights, light };
+  // 7. Generate Treasure Chests across surface & caves with basic boss summoners!
+  const chests: Record<number, InventorySlot[]> = {};
+  const placeChest = (cx: number, cy: number, loot: InventorySlot[]) => {
+    if (cx < 2 || cx >= width - 2 || cy < 2 || cy >= height - 2) return;
+    // Ensure solid floor beneath chest and clear space for the chest itself
+    const floorIdx = tileIndex(cx, cy + 1, width);
+    if (!isTileSolid(tiles[floorIdx] as TileType)) {
+      tiles[floorIdx] = TileType.Planks;
+    }
+    const idx = tileIndex(cx, cy, width);
+    tiles[idx] = TileType.Chest;
+    chests[idx] = loot;
+  };
+
+  // Surface chest left of spawn: Kotulhu basic summoner + starter gear
+  const leftChestX = spawnX - 15;
+  placeChest(leftChestX, surfaceHeights[leftChestX] - 1, [
+    { itemId: 'summon_kotulhu', count: 2 },
+    { itemId: 'crispy_fish', count: 3 },
+    { itemId: 'torch_item', count: 12 },
+    { itemId: 'wood_bow', count: 1 },
+  ]);
+
+  // Surface chest right of spawn: Cat Worm basic summoner + bombs & iron
+  const rightChestX = spawnX + 16;
+  placeChest(rightChestX, surfaceHeights[rightChestX] - 1, [
+    { itemId: 'summon_cat_worm', count: 2 },
+    { itemId: 'warm_milk', count: 2 },
+    { itemId: 'yarn_bomb', count: 8 },
+    { itemId: 'iron_bar', count: 6 },
+  ]);
+
+  // Cave treasure chests across varying depths
+  const caveLootTables: InventorySlot[][] = [
+    [
+      { itemId: 'summon_king_slime', count: 1 },
+      { itemId: 'summon_kotulhu', count: 1 },
+      { itemId: 'iron_bar', count: 8 },
+      { itemId: 'crispy_fish', count: 3 },
+    ],
+    [
+      { itemId: 'summon_cat_worm', count: 1 },
+      { itemId: 'fish_boomerang', count: 1 },
+      { itemId: 'gold_bar', count: 5 },
+      { itemId: 'torch_item', count: 16 },
+    ],
+    [
+      { itemId: 'summon_kotulhu', count: 1 },
+      { itemId: 'summon_eye_boss', count: 1 },
+      { itemId: 'catnip_elixir', count: 1 },
+      { itemId: 'ruby_gem', count: 2 },
+    ],
+    [
+      { itemId: 'summon_skele_cat', count: 1 },
+      { itemId: 'gold_bar', count: 8 },
+      { itemId: 'warm_milk', count: 3 },
+      { itemId: 'ruby_gem', count: 3 },
+    ],
+    [
+      { itemId: 'summon_king_slime', count: 1 },
+      { itemId: 'summon_cat_worm', count: 1 },
+      { itemId: 'iron_bar', count: 10 },
+      { itemId: 'yarn_bomb', count: 10 },
+    ],
+    [
+      { itemId: 'summon_skele_cat', count: 1 },
+      { itemId: 'summon_eye_boss', count: 1 },
+      { itemId: 'gold_bar', count: 10 },
+      { itemId: 'catnip_elixir', count: 1 },
+    ],
+  ];
+
+  const chestColumns = [22, 42, 62, 98, 118, 138];
+  chestColumns.forEach((cx, i) => {
+    const sy = surfaceHeights[cx];
+    const targetDepth = sy + 9 + (i % 3) * 11;
+    const cy = Math.min(height - 5, targetDepth);
+    // Carve a tiny 3x2 stone treasure alcove so the chest sits cleanly on planks
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 0; dy++) {
+        tiles[tileIndex(cx + dx, cy + dy, width)] = TileType.Air;
+        walls[tileIndex(cx + dx, cy + dy, width)] = WallType.WoodWall;
+      }
+      tiles[tileIndex(cx + dx, cy + 1, width)] = TileType.Planks;
+    }
+    tiles[tileIndex(cx - 1, cy, width)] = TileType.Torch;
+    placeChest(cx, cy, caveLootTables[i % caveLootTables.length]);
+  });
+
+  const world: WorldData = { width, height, tiles, walls, surfaceHeights, light, chests };
   recomputeLighting(world, 0.25);
   return world;
 }

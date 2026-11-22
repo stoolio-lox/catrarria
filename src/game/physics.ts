@@ -19,6 +19,7 @@ import {
   isTileSolid,
   setTile,
   setWall,
+  tileIndex,
 } from './worldGen';
 
 export const GRAVITY = 1280;
@@ -279,11 +280,19 @@ export function tryPlaceItemAtTile(
   itemId: string,
   tx: number,
   ty: number,
-): { placed: boolean; action: 'tile' | 'wall' | 'door_toggle' | 'bed_spawn' | 'stool_interact' | 'none' } {
+): {
+  placed: boolean;
+  action: 'tile' | 'wall' | 'door_toggle' | 'bed_spawn' | 'stool_interact' | 'chest_open' | 'none';
+} {
   if (!inBounds(tx, ty, world)) return { placed: false, action: 'none' };
   if (!canReachTile(player, tx, ty, 6.2)) return { placed: false, action: 'none' };
 
   const curTile = getTile(world, tx, ty);
+
+  // Interact with chest on right click
+  if (curTile === TileType.Chest) {
+    return { placed: false, action: 'chest_open' };
+  }
 
   // Interact with stool on right click
   if (curTile === TileType.Stool) {
@@ -341,6 +350,11 @@ export function tryPlaceItemAtTile(
     if (def.placesTile === TileType.Bed) {
       player.spawnX = tx * TILE_SIZE + 2;
       player.spawnY = ty * TILE_SIZE - player.height - 2;
+    } else if (def.placesTile === TileType.Chest) {
+      const idx = tileIndex(tx, ty, world.width);
+      if (!world.chests[idx]) {
+        world.chests[idx] = [];
+      }
     }
     return { placed: true, action: 'tile' };
   }
@@ -392,6 +406,16 @@ export function tryDamageTile(
     tileDamageMap.set(key, nextDmg);
     return { broken: false, droppedItemId: null, hitTile: tile };
   }
+}
+
+export function isBossKind(kind: EnemyKind): boolean {
+  return (
+    kind === 'king_slime' ||
+    kind === 'kotulhu' ||
+    kind === 'cat_worm' ||
+    kind === 'skele_cat' ||
+    kind === 'eye_boss'
+  );
 }
 
 export function createEnemy(
@@ -512,6 +536,125 @@ export function createEnemy(
           { itemId: 'gold_ore', min: 1, max: 2, chance: 0.45 },
         ],
       };
+    case 'king_slime':
+      return {
+        id,
+        kind,
+        name: 'Король Слизней-Котов',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        width: 68,
+        height: 54,
+        hp: Math.round(240 * mult),
+        maxHp: Math.round(240 * mult),
+        damage: Math.round(20 * mult),
+        defense: 4,
+        facing: 1,
+        onGround: false,
+        aiState: 'patrol',
+        stateTimer: 1.1,
+        hitFlashTimer: 0,
+        koTimer: 0,
+        animPhase: 0,
+        summonTimer: 4.5,
+        drops: [
+          { itemId: 'slime_gel', min: 10, max: 16, chance: 1 },
+          { itemId: 'gold_bar', min: 3, max: 5, chance: 1 },
+          { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
+        ],
+      };
+    case 'kotulhu':
+      return {
+        id,
+        kind,
+        name: 'Котулху (Босс)',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        width: 66,
+        height: 66,
+        hp: Math.round(320 * mult),
+        maxHp: Math.round(320 * mult),
+        damage: Math.round(26 * mult),
+        defense: 5,
+        facing: 1,
+        onGround: false,
+        aiState: 'patrol',
+        stateTimer: 1.3,
+        hitFlashTimer: 0,
+        koTimer: 0,
+        animPhase: 0,
+        drops: [
+          { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
+          { itemId: 'iron_bar', min: 5, max: 8, chance: 1 },
+          { itemId: 'warm_milk', min: 2, max: 3, chance: 1 },
+        ],
+      };
+    case 'cat_worm': {
+      const segs: { x: number; y: number }[] = [];
+      for (let i = 1; i <= 9; i++) {
+        segs.push({ x: x + i * 24, y });
+      }
+      return {
+        id,
+        kind,
+        name: 'Котовый Червь (Босс)',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        width: 54,
+        height: 54,
+        hp: Math.round(380 * mult),
+        maxHp: Math.round(380 * mult),
+        damage: Math.round(24 * mult),
+        defense: 6,
+        facing: 1,
+        onGround: false,
+        aiState: 'patrol',
+        stateTimer: 1.8,
+        hitFlashTimer: 0,
+        koTimer: 0,
+        animPhase: 0,
+        segments: segs,
+        drops: [
+          { itemId: 'iron_bar', min: 6, max: 10, chance: 1 },
+          { itemId: 'gold_bar', min: 4, max: 6, chance: 1 },
+          { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
+        ],
+      };
+    }
+    case 'skele_cat':
+      return {
+        id,
+        kind,
+        name: 'Кототрон (Босс)',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        width: 64,
+        height: 64,
+        hp: Math.round(440 * mult),
+        maxHp: Math.round(440 * mult),
+        damage: Math.round(30 * mult),
+        defense: 8,
+        facing: 1,
+        onGround: false,
+        aiState: 'patrol',
+        stateTimer: 1.5,
+        hitFlashTimer: 0,
+        koTimer: 0,
+        animPhase: 0,
+        drops: [
+          { itemId: 'monster_bone', min: 10, max: 16, chance: 1 },
+          { itemId: 'ruby_gem', min: 4, max: 7, chance: 1 },
+          { itemId: 'gold_bar', min: 5, max: 8, chance: 1 },
+        ],
+      };
     case 'eye_boss':
       return {
         id,
@@ -523,8 +666,8 @@ export function createEnemy(
         vy: 0,
         width: 56,
         height: 56,
-        hp: Math.round(260 * mult),
-        maxHp: Math.round(260 * mult),
+        hp: Math.round(280 * mult),
+        maxHp: Math.round(280 * mult),
         damage: Math.round(24 * mult),
         defense: 5,
         facing: 1,
@@ -549,7 +692,7 @@ export function stepEnemyAI(
   world: WorldData,
   dt: number,
   allowAttackToken: boolean,
-): { spawnSlimeGlob?: { vx: number; vy: number } } {
+): { spawnSlimeGlob?: { vx: number; vy: number }; spawnMinionKind?: EnemyKind } {
   enemy.animPhase += dt * 7;
   enemy.hitFlashTimer = Math.max(0, enemy.hitFlashTimer - dt);
 
@@ -676,18 +819,113 @@ export function stepEnemyAI(
     return {};
   }
 
-  // Policy 4: Eye Boss (Orbit + ranged orb + dash charge)
+  // Policy 4: King Slime Boss (Giant crowned hops + periodic mega slam + slime minions)
+  if (enemy.kind === 'king_slime') {
+    let spawnMinionKind: EnemyKind | undefined;
+    enemy.summonTimer = (enemy.summonTimer ?? 4) - dt;
+    if (enemy.summonTimer <= 0) {
+      enemy.summonTimer = 5.2;
+      spawnMinionKind = 'slime';
+    }
+    if (enemy.onGround) {
+      enemy.vx *= Math.max(0, 1 - dt * 8);
+      if (enemy.aiState === 'patrol' && enemy.stateTimer <= 0) {
+        enemy.aiState = 'windup';
+        enemy.stateTimer = 0.45;
+        enemy.facing = dir;
+      } else if (enemy.aiState === 'windup' && enemy.stateTimer <= 0) {
+        enemy.aiState = 'attack';
+        const bigJump = Math.random() < 0.35;
+        enemy.vx = enemy.facing * (bigJump ? 245 : 175);
+        enemy.vy = bigJump ? -560 : -400;
+        enemy.stateTimer = 0.9;
+      } else if (enemy.aiState === 'attack' && enemy.stateTimer <= 0) {
+        enemy.aiState = 'patrol';
+        enemy.stateTimer = 0.65;
+      }
+    }
+    enemy.vy = Math.min(MAX_FALL_SPEED, enemy.vy + GRAVITY * dt);
+    const { hitWall } = moveEntityWithTiles(enemy, world, dt, false);
+    if (hitWall && enemy.onGround) {
+      enemy.vy = -490;
+    }
+    return { spawnMinionKind };
+  }
+
+  // Policy 5: Cat Worm Boss (Burrowing serpentine pursuit through earth & sky + trailing body segments)
+  if (enemy.kind === 'cat_worm') {
+    enemy.facing = dir;
+    if (enemy.aiState === 'patrol') {
+      const targetAngle = Math.atan2(dy + Math.sin(enemy.animPhase * 0.45) * 95, dx);
+      const speed = 230;
+      enemy.vx += (Math.cos(targetAngle) * speed - enemy.vx) * Math.min(1, dt * 3.2);
+      enemy.vy += (Math.sin(targetAngle) * speed - enemy.vy) * Math.min(1, dt * 3.2);
+      if (enemy.stateTimer <= 0) {
+        enemy.aiState = 'windup';
+        enemy.stateTimer = 0.45;
+      }
+    } else if (enemy.aiState === 'windup') {
+      enemy.vx *= 0.92;
+      enemy.vy *= 0.92;
+      if (enemy.stateTimer <= 0) {
+        enemy.aiState = 'attack';
+        const len = Math.max(1, dist);
+        enemy.vx = (dx / len) * 430;
+        enemy.vy = (dy / len) * 430;
+        enemy.stateTimer = 0.75;
+      }
+    } else if (enemy.aiState === 'attack') {
+      if (enemy.stateTimer <= 0) {
+        enemy.aiState = 'patrol';
+        enemy.stateTimer = 1.65;
+      }
+    }
+
+    enemy.x += enemy.vx * dt;
+    enemy.y += enemy.vy * dt;
+
+    // Clamp worm head within world boundaries
+    const maxWX = world.width * TILE_SIZE - enemy.width - 16;
+    const maxWY = world.height * TILE_SIZE - enemy.height - 16;
+    enemy.x = Math.max(16, Math.min(maxWX, enemy.x));
+    enemy.y = Math.max(16, Math.min(maxWY, enemy.y));
+
+    // Update trailing serpentine body segments cleanly
+    if (enemy.segments && enemy.segments.length > 0) {
+      let prevX = enemy.x + enemy.width / 2;
+      let prevY = enemy.y + enemy.height / 2;
+      const segSpacing = 26;
+      for (const seg of enemy.segments) {
+        const sdx = prevX - seg.x;
+        const sdy = prevY - seg.y;
+        const sdist = Math.hypot(sdx, sdy);
+        if (sdist > segSpacing) {
+          seg.x = prevX - (sdx / sdist) * segSpacing;
+          seg.y = prevY - (sdy / sdist) * segSpacing;
+        }
+        prevX = seg.x;
+        prevY = seg.y;
+      }
+    }
+    return {};
+  }
+
+  // Policy 6: Kotulhu / Skele-Cat / Eye Boss (Hover + Phase 2 frenzy + orb volleys + dash)
+  const isPhase2 = enemy.hp < enemy.maxHp * 0.5;
   enemy.facing = dir;
   if (enemy.aiState === 'patrol') {
-    const orbitX = player.x + Math.cos(enemy.animPhase * 0.25) * 190;
-    const orbitY = player.y - 120 + Math.sin(enemy.animPhase * 0.4) * 45;
+    const hoverRadius = enemy.kind === 'skele_cat' ? 210 : 185;
+    const speedFactor = enemy.kind === 'kotulhu' && isPhase2 ? 0.42 : 0.28;
+    const orbitX = player.x + Math.cos(enemy.animPhase * speedFactor) * hoverRadius;
+    const orbitY = player.y - (enemy.kind === 'skele_cat' ? 145 : 115) + Math.sin(enemy.animPhase * 0.45) * 48;
     const odx = orbitX - enemy.x;
     const ody = orbitY - enemy.y;
-    enemy.vx += (Math.max(-220, Math.min(220, odx * 2.2)) - enemy.vx) * Math.min(1, dt * 4);
-    enemy.vy += (Math.max(-180, Math.min(180, ody * 2.2)) - enemy.vy) * Math.min(1, dt * 4);
+    const maxSpeed = isPhase2 ? 270 : 220;
+    enemy.vx += (Math.max(-maxSpeed, Math.min(maxSpeed, odx * 2.4)) - enemy.vx) * Math.min(1, dt * 4.5);
+    enemy.vy += (Math.max(-maxSpeed, Math.min(maxSpeed, ody * 2.4)) - enemy.vy) * Math.min(1, dt * 4.5);
     if (enemy.stateTimer <= 0) {
       enemy.aiState = 'windup';
-      enemy.stateTimer = 0.55;
+      enemy.stateTimer = isPhase2 ? 0.4 : 0.55;
     }
   } else if (enemy.aiState === 'windup') {
     enemy.vx *= 0.88;
@@ -695,10 +933,11 @@ export function stepEnemyAI(
     if (enemy.stateTimer <= 0) {
       enemy.aiState = 'attack';
       const len = Math.max(1, dist);
-      enemy.vx = (dx / len) * 380;
-      enemy.vy = (dy / len) * 380;
-      enemy.stateTimer = 0.65;
-      const globSpeed = 290;
+      const dashSpeed = enemy.kind === 'kotulhu' ? (isPhase2 ? 460 : 370) : enemy.kind === 'skele_cat' ? 390 : 380;
+      enemy.vx = (dx / len) * dashSpeed;
+      enemy.vy = (dy / len) * dashSpeed;
+      enemy.stateTimer = isPhase2 ? 0.58 : 0.65;
+      const globSpeed = enemy.kind === 'skele_cat' ? 330 : 295;
       return {
         spawnSlimeGlob: {
           vx: (dx / len) * globSpeed,
@@ -709,14 +948,14 @@ export function stepEnemyAI(
   } else if (enemy.aiState === 'attack') {
     if (enemy.stateTimer <= 0) {
       enemy.aiState = 'recover';
-      enemy.stateTimer = 0.9;
+      enemy.stateTimer = isPhase2 ? 0.65 : 0.9;
     }
   } else {
     enemy.vx *= 0.92;
     enemy.vy *= 0.92;
     if (enemy.stateTimer <= 0) {
       enemy.aiState = 'patrol';
-      enemy.stateTimer = 1.4;
+      enemy.stateTimer = isPhase2 ? 1.0 : 1.35;
     }
   }
   enemy.x += enemy.vx * dt;

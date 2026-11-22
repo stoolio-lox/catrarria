@@ -5,6 +5,7 @@ interface StatusModalProps {
   mode: 'paused' | 'gameover';
   stats: RunStats;
   onResume?: () => void;
+  onOpenSettings?: () => void;
   onRestart: () => void;
   onTitle: () => void;
 }
@@ -13,6 +14,7 @@ export const StatusModal: React.FC<StatusModalProps> = ({
   mode,
   stats,
   onResume,
+  onOpenSettings,
   onRestart,
   onTitle,
 }) => {
@@ -64,6 +66,15 @@ export const StatusModal: React.FC<StatusModalProps> = ({
               className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-base cursor-pointer"
             >
               Продолжить
+            </button>
+          )}
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-200 font-display font-bold text-base cursor-pointer"
+            >
+              Настройки
             </button>
           )}
           <button

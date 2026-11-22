@@ -20,12 +20,14 @@ import {
   computeDamageAfterDefense,
   createEnemy,
   createInitialPlayer,
+  isBossKind,
   stepEnemyAI,
   stepPlayerPhysics,
   tryDamageTile,
   tryPlaceItemAtTile,
 } from './physics';
-import { TILE_SIZE, TileType, WallType } from './types';
+import { DEFAULT_SETTINGS, clampVolume } from './settings';
+import { EnemyKind, TILE_SIZE, TileType, WallType } from './types';
 import {
   generateWorld,
   getNearbyStations,
@@ -35,6 +37,7 @@ import {
   isTileSolid,
   setTile,
   setWall,
+  tileIndex,
 } from './worldGen';
 
 test('world generation creates safe spawn clearing and underground ores', () => {
@@ -260,3 +263,80 @@ test('expanded 63-slot inventory capacity and dropFromSlot partial/full stack dr
   assert.equal(dropFromSlot(hotbar, 3, 1), null);
   assert.equal(dropFromSlot(backpack, 999, 1), null);
 });
+
+test('settings defaults and volume clamping stay within 0..1', () => {
+  assert.equal(DEFAULT_SETTINGS.musicEnabled, true);
+  assert.equal(DEFAULT_SETTINGS.sfxEnabled, true);
+  assert.equal(clampVolume(-0.4), 0);
+  assert.equal(clampVolume(1.8), 1);
+  assert.equal(clampVolume(0.65), 0.65);
+  assert.equal(clampVolume(Number.NaN), 0.5);
+});
+
+test('world generates treasure chests with basic Kotulhu and Cat Worm summoners and supports opening & placing chests', () => {
+  const world = generateWorld(2025);
+  const spawnX = Math.floor(world.width / 2);
+
+  const leftChestX = spawnX - 15;
+  const leftChestY = world.surfaceHeights[leftChestX] - 1;
+  assert.equal(getTile(world, leftChestX, leftChestY), TileType.Chest);
+  const leftLoot = world.chests[tileIndex(leftChestX, leftChestY, world.width)] ?? [];
+  assert.ok(leftLoot.some((s) => s.itemId === 'summon_kotulhu'), 'Left surface chest must contain Kotulhu summoner');
+
+  const rightChestX = spawnX + 16;
+  const rightChestY = world.surfaceHeights[rightChestX] - 1;
+  assert.equal(getTile(world, rightChestX, rightChestY), TileType.Chest);
+  const rightLoot = world.chests[tileIndex(rightChestX, rightChestY, world.width)] ?? [];
+  assert.ok(rightLoot.some((s) => s.itemId === 'summon_cat_worm'), 'Right surface chest must contain Cat Worm summoner');
+
+  // Verify total generated chests >= 8
+  assert.ok(Object.keys(world.chests).length >= 8);
+
+  // Move player near left chest and verify tryPlaceItemAtTile triggers chest_open
+  const player = createInitialPlayer(world);
+  player.x = leftChestX * TILE_SIZE;
+  player.y = (leftChestY - 1) * TILE_SIZE;
+  const openRes = tryPlaceItemAtTile(world, player, 'planks_block', leftChestX, leftChestY);
+  assert.equal(openRes.placed, false);
+  assert.equal(openRes.action, 'chest_open');
+
+  // Verify crafting & placing a new empty chest_item initializes its chest inventory
+  const placeX = leftChestX + 2;
+  const placeY = world.surfaceHeights[placeX] - 1;
+  const placeRes = tryPlaceItemAtTile(world, player, 'chest_item', placeX, placeY);
+  assert.equal(placeRes.placed, true);
+  assert.equal(getTile(world, placeX, placeY), TileType.Chest);
+  assert.deepEqual(world.chests[tileIndex(placeX, placeY, world.width)], []);
+});
+
+test('all 5 bosses exist with summon items, distinct AI, and Cat Worm body segments', () => {
+  const bossKinds: EnemyKind[] = ['king_slime', 'kotulhu', 'cat_worm', 'skele_cat', 'eye_boss'];
+  const world = generateWorld(888);
+  const player = createInitialPlayer(world);
+
+  for (const kind of bossKinds) {
+    assert.equal(isBossKind(kind), true);
+    const summonItem = Object.values(ITEMS).find((it) => it.category === 'summon' && it.summonsBoss === kind);
+    assert.ok(summonItem, `Missing summon item for boss ${kind}`);
+
+    const boss = createEnemy(10, kind, player.x + 180, player.y - 60, 1);
+    assert.ok(boss.maxHp >= 240);
+    if (kind === 'cat_worm') {
+      assert.equal(boss.segments?.length, 9);
+    }
+
+    const startX = boss.x;
+    for (let i = 0; i < 30; i++) {
+      stepEnemyAI(boss, player, world, 1 / 60, true);
+    }
+    assert.ok(Number.isFinite(boss.x) && Number.isFinite(boss.y));
+    if (kind === 'cat_worm' || kind === 'kotulhu' || kind === 'skele_cat') {
+      assert.ok(Math.abs(boss.x - startX) > 1 || Math.abs(boss.vx) > 0);
+    }
+  }
+
+  assert.equal(isBossKind('slime'), false);
+  assert.equal(ITEMS.summon_kotulhu.textureSrc, '/assets/aistudio/wait_518dc071.jpg');
+  assert.equal(ITEMS.summon_cat_worm.textureSrc, '/assets/aistudio/chine_5a03a968.jpg');
+});
+

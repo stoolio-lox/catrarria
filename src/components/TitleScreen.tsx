@@ -1,10 +1,12 @@
 import React from 'react';
+import { Settings } from 'lucide-react';
 
 interface TitleScreenProps {
   onStart: () => void;
+  onOpenSettings: () => void;
 }
 
-export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart }) => {
+export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart, onOpenSettings }) => {
   return (
     <div className="fixed inset-0 z-20 flex flex-col items-center justify-between py-10 px-6 bg-gradient-to-b from-[#071122]/75 via-[#071122]/35 to-[#071122]/85">
       {/* Top Safe Space */}
@@ -73,14 +75,25 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStart }) => {
           Копай подземелья, строй уютный кошачий замок, крафти арсенал оружия и отбивайся от ночных чудовищ.
         </p>
 
-        <button
-          type="button"
-          data-start="true"
-          onClick={onStart}
-          className="px-10 py-4 rounded-xl bg-amber-500 hover:bg-amber-400 active:translate-y-0.5 text-slate-950 font-display font-extrabold text-xl tracking-wide shadow-[0_6px_0_#92400e,0_12px_28px_rgba(0,0,0,0.5)] transition-transform duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-300"
-        >
-          Играть
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            data-start="true"
+            onClick={onStart}
+            className="px-10 py-4 rounded-xl bg-amber-500 hover:bg-amber-400 active:translate-y-0.5 text-slate-950 font-display font-extrabold text-xl tracking-wide shadow-[0_6px_0_#92400e,0_12px_28px_rgba(0,0,0,0.5)] transition-transform duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-300"
+          >
+            Играть
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="px-6 py-4 rounded-xl bg-[#0e172a]/90 hover:bg-slate-800 border border-slate-600/80 hover:border-amber-400/60 text-slate-100 font-display font-bold text-base flex items-center gap-2 shadow-lg transition-colors cursor-pointer"
+          >
+            <Settings className="w-5 h-5 text-amber-400" />
+            <span>Настройки</span>
+          </button>
+        </div>
       </div>
 
       {/* Flat Borderless Control Hints */}

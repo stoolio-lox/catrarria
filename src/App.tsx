@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChestModal } from './components/ChestModal';
 import { DebugModal } from './components/DebugModal';
 import { GameHud } from './components/GameHud';
 import { InventoryModal } from './components/InventoryModal';
+import { SettingsModal } from './components/SettingsModal';
 import { StatusModal } from './components/StatusModal';
 import { TitleScreen } from './components/TitleScreen';
 import { sound } from './game/audio';
 import { KotarriaEngine } from './game/engine';
-import { HudSnapshot } from './game/types';
+import { loadSettings } from './game/settings';
+import { GameSettings, HudSnapshot } from './game/types';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -16,24 +19,39 @@ export default function App() {
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [debugUnlocked, setDebugUnlocked] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [settings, setSettings] = useState<GameSettings>(() => loadSettings());
 
   const inventoryOpenRef = useRef(false);
   inventoryOpenRef.current = inventoryOpen;
   const debugOpenRef = useRef(false);
   debugOpenRef.current = debugOpen;
+  const settingsOpenRef = useRef(false);
+  settingsOpenRef.current = settingsOpen;
+  const chestOpenRef = useRef(false);
+  chestOpenRef.current = Boolean(hud?.activeChest);
 
   useEffect(() => {
-    engineRef.current?.setUiModalOpen(inventoryOpen || debugOpen);
-  }, [inventoryOpen, debugOpen]);
+    engineRef.current?.setUiModalOpen(
+      inventoryOpen || debugOpen || settingsOpen || Boolean(hud?.activeChest),
+    );
+  }, [inventoryOpen, debugOpen, settingsOpen, hud?.activeChest]);
+
+  const handleSettingsChange = useCallback((next: GameSettings) => {
+    setSettings(next);
+    engineRef.current?.applySettings(next);
+  }, []);
 
   const handleStart = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
+    sound.unlock();
     setInventoryOpen(false);
     setHelpOpen(false);
     setDebugOpen(false);
+    setSettingsOpen(false);
     engine.startNewGame();
     canvasRef.current?.focus();
   }, []);
@@ -41,6 +59,14 @@ export default function App() {
   const handleTogglePause = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
+    if (settingsOpenRef.current) {
+      setSettingsOpen(false);
+      return;
+    }
+    if (chestOpenRef.current) {
+      engine.closeChest();
+      return;
+    }
     if (inventoryOpenRef.current) {
       setInventoryOpen(false);
       return;
@@ -57,9 +83,16 @@ export default function App() {
     setMuted((prev) => {
       const next = !prev;
       sound.muted = next;
+      sound.applySettings({
+        musicEnabled: settings.musicEnabled,
+        musicVolume: settings.musicVolume,
+        sfxEnabled: settings.sfxEnabled,
+        sfxVolume: settings.sfxVolume,
+        muted: next,
+      });
       return next;
     });
-  }, []);
+  }, [settings]);
 
   useEffect(() => {
     const engine = new KotarriaEngine((snap) => {
@@ -85,7 +118,15 @@ export default function App() {
     if (canvas) ro.observe(canvas);
 
     const onKeyDown = (e: KeyboardEvent) => {
+      sound.unlock();
       if (engine.phase === 'title') {
+        if (settingsOpenRef.current) {
+          if (e.code === 'Escape') {
+            e.preventDefault();
+            setSettingsOpen(false);
+          }
+          return;
+        }
         if (e.code === 'Enter' || e.code === 'Space') {
           e.preventDefault();
           setInventoryOpen(false);
@@ -100,6 +141,7 @@ export default function App() {
         if (e.code === 'Escape') {
           e.preventDefault();
           setDebugOpen(false);
+          setSettingsOpen(false);
         }
         return;
       }
@@ -108,6 +150,13 @@ export default function App() {
         setMuted((prev) => {
           const next = !prev;
           sound.muted = next;
+          sound.applySettings({
+            musicEnabled: engine.settings.musicEnabled,
+            musicVolume: engine.settings.musicVolume,
+            sfxEnabled: engine.settings.sfxEnabled,
+            sfxVolume: engine.settings.sfxVolume,
+            muted: next,
+          });
           return next;
         });
         return;
@@ -118,6 +167,8 @@ export default function App() {
         if (engine.phase === 'playing') {
           engine.clearInputs();
           setInventoryOpen(false);
+          setSettingsOpen(false);
+          engine.closeChest();
           setDebugOpen((v) => !v);
         }
         return;
@@ -125,11 +176,19 @@ export default function App() {
 
       if (e.code === 'Escape' || e.code === 'KeyP') {
         if (debugOpenRef.current && e.code === 'KeyP') {
-          return; // Allow typing 'p' inside debug password input if any
+          return;
         }
         e.preventDefault();
+        if (settingsOpenRef.current) {
+          setSettingsOpen(false);
+          return;
+        }
         if (debugOpenRef.current) {
           setDebugOpen(false);
+          return;
+        }
+        if (chestOpenRef.current) {
+          engine.closeChest();
           return;
         }
         if (inventoryOpenRef.current) {
@@ -146,11 +205,12 @@ export default function App() {
       }
 
       if (engine.phase !== 'playing') return;
-      if (debugOpenRef.current) return;
+      if (debugOpenRef.current || settingsOpenRef.current) return;
 
       if (e.code === 'KeyE' || e.code === 'Tab') {
         e.preventDefault();
         engine.clearInputs();
+        engine.closeChest();
         setInventoryOpen((v) => !v);
         return;
       }
@@ -160,7 +220,7 @@ export default function App() {
         return;
       }
 
-      if (inventoryOpenRef.current) return;
+      if (inventoryOpenRef.current || chestOpenRef.current) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -197,6 +257,9 @@ export default function App() {
     };
   }, []);
 
+  const anyModalBlockingCanvas =
+    inventoryOpen || debugOpen || settingsOpen || Boolean(hud?.activeChest);
+
   return (
     <main className="relative w-full h-full overflow-hidden bg-[#0b1628]">
       <canvas
@@ -205,12 +268,12 @@ export default function App() {
         tabIndex={0}
         onContextMenu={(e) => e.preventDefault()}
         onMouseMove={(e) => {
-          if (hud?.phase === 'playing' && !inventoryOpen && !debugOpen) {
+          if (hud?.phase === 'playing' && !anyModalBlockingCanvas) {
             engineRef.current?.handleMouseMove(e.clientX, e.clientY);
           }
         }}
         onMouseDown={(e) => {
-          if (hud?.phase === 'playing' && !inventoryOpen && !debugOpen) {
+          if (hud?.phase === 'playing' && !anyModalBlockingCanvas) {
             engineRef.current?.handleMouseDown(e.button, e.clientX, e.clientY);
           }
         }}
@@ -218,7 +281,7 @@ export default function App() {
           engineRef.current?.handleMouseUp(e.button);
         }}
         onWheel={(e) => {
-          if (hud?.phase !== 'playing' || inventoryOpen || debugOpen || !hud) return;
+          if (hud?.phase !== 'playing' || anyModalBlockingCanvas || !hud) return;
           const dir = e.deltaY > 0 ? 1 : -1;
           const next = (hud.selectedSlot + dir + 9) % 9;
           engineRef.current?.selectHotbarSlot(next);
@@ -226,7 +289,15 @@ export default function App() {
         className="block w-full h-full outline-none cursor-crosshair"
       />
 
-      {hud?.phase === 'title' && <TitleScreen onStart={handleStart} />}
+      {hud?.phase === 'title' && (
+        <TitleScreen
+          onStart={handleStart}
+          onOpenSettings={() => {
+            sound.unlock();
+            setSettingsOpen(true);
+          }}
+        />
+      )}
 
       {hud && hud.phase !== 'title' && (
         <GameHud
@@ -235,10 +306,13 @@ export default function App() {
           inventoryOpen={inventoryOpen}
           helpOpen={helpOpen}
           debugOpen={debugOpen}
+          settingsOpen={settingsOpen}
           onSelectSlot={(idx) => engineRef.current?.selectHotbarSlot(idx)}
           onToggleInventory={() => {
             engineRef.current?.clearInputs();
+            engineRef.current?.closeChest();
             setDebugOpen(false);
+            setSettingsOpen(false);
             setInventoryOpen((v) => !v);
           }}
           onToggleBuildMode={() => engineRef.current?.toggleToolMode()}
@@ -247,14 +321,36 @@ export default function App() {
           onToggleHelp={() => setHelpOpen((v) => !v)}
           onToggleDebug={() => {
             engineRef.current?.clearInputs();
+            engineRef.current?.closeChest();
             setInventoryOpen(false);
+            setSettingsOpen(false);
             setDebugOpen((v) => !v);
           }}
+          onOpenSettings={() => {
+            engineRef.current?.clearInputs();
+            engineRef.current?.closeChest();
+            setInventoryOpen(false);
+            setDebugOpen(false);
+            setSettingsOpen(true);
+          }}
           onSummonBoss={() => engineRef.current?.summonNightBoss()}
+          onOpenChest={() => engineRef.current?.openNearestChest()}
           onPetStool={() => engineRef.current?.petNearestStool()}
           onDismissStoolSpeech={() => engineRef.current?.dismissStoolSpeech()}
           onCopyStoolUrl={() => engineRef.current?.copyStoolUrlAgain()}
           onDropSelected={(dropAll) => engineRef.current?.dropSelectedHotbarItem(dropAll)}
+        />
+      )}
+
+      {hud && hud.phase === 'playing' && hud.activeChest && !inventoryOpen && !debugOpen && !settingsOpen && (
+        <ChestModal
+          chest={hud.activeChest}
+          onTakeItem={(idx) => engineRef.current?.takeChestItem(idx)}
+          onTakeAll={() => engineRef.current?.takeAllChestLoot()}
+          onClose={() => {
+            engineRef.current?.closeChest();
+            canvasRef.current?.focus();
+          }}
         />
       )}
 
@@ -292,16 +388,31 @@ export default function App() {
         />
       )}
 
-      {hud && (hud.phase === 'paused' || hud.phase === 'gameover') && (
+      {hud && (hud.phase === 'paused' || hud.phase === 'gameover') && !settingsOpen && (
         <StatusModal
           mode={hud.phase}
           stats={hud.stats}
           onResume={hud.phase === 'paused' ? handleTogglePause : undefined}
+          onOpenSettings={hud.phase === 'paused' ? () => setSettingsOpen(true) : undefined}
           onRestart={handleStart}
           onTitle={() => {
             setInventoryOpen(false);
             setDebugOpen(false);
+            setSettingsOpen(false);
             engineRef.current?.setPhase('title');
+          }}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsModal
+          settings={settings}
+          onChange={handleSettingsChange}
+          onClose={() => {
+            setSettingsOpen(false);
+            if (hud?.phase === 'playing') {
+              canvasRef.current?.focus();
+            }
           }}
         />
       )}

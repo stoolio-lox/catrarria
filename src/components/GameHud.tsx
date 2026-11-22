@@ -1,5 +1,5 @@
 import React from 'react';
-import { Backpack, Bug, Copy, Hammer, HelpCircle, PackageMinus, Pause, Volume2, VolumeX, X } from 'lucide-react';
+import { Backpack, Bug, Copy, Hammer, HelpCircle, PackageMinus, Pause, Settings, Volume2, VolumeX, X } from 'lucide-react';
 import { ITEMS } from '../game/catalog';
 import { HudSnapshot } from '../game/types';
 import { ItemIcon } from './ItemIcon';
@@ -10,6 +10,7 @@ interface GameHudProps {
   inventoryOpen: boolean;
   helpOpen: boolean;
   debugOpen: boolean;
+  settingsOpen: boolean;
   onSelectSlot: (idx: number) => void;
   onToggleInventory: () => void;
   onToggleBuildMode: () => void;
@@ -17,7 +18,9 @@ interface GameHudProps {
   onTogglePause: () => void;
   onToggleHelp: () => void;
   onToggleDebug: () => void;
+  onOpenSettings: () => void;
   onSummonBoss: () => void;
+  onOpenChest: () => void;
   onPetStool: () => void;
   onDismissStoolSpeech: () => void;
   onCopyStoolUrl: () => void;
@@ -30,6 +33,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   inventoryOpen,
   helpOpen,
   debugOpen,
+  settingsOpen,
   onSelectSlot,
   onToggleInventory,
   onToggleBuildMode,
@@ -37,7 +41,9 @@ export const GameHud: React.FC<GameHudProps> = ({
   onTogglePause,
   onToggleHelp,
   onToggleDebug,
+  onOpenSettings,
   onSummonBoss,
+  onOpenChest,
   onPetStool,
   onDismissStoolSpeech,
   onCopyStoolUrl,
@@ -111,7 +117,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
         {/* Center Boss HP Bar (only when boss active) */}
         {hud.bossInfo && (
-          <div className="hidden md:flex flex-col items-center bg-[#180d14]/92 border border-rose-500/50 rounded-xl px-5 py-2 shadow-lg min-w-[280px]">
+          <div className="flex flex-col items-center bg-[#180d14]/92 border border-rose-500/50 rounded-xl px-4 sm:px-5 py-2 shadow-lg min-w-[200px] sm:min-w-[280px]">
             <div className="flex items-center justify-between w-full text-xs font-semibold text-rose-200 mb-1">
               <span>{hud.bossInfo.name}</span>
               <span className="font-mono-num">
@@ -236,6 +242,24 @@ export const GameHud: React.FC<GameHudProps> = ({
             tabIndex={-1}
             onClick={(e) => {
               e.currentTarget.blur();
+              onOpenSettings();
+            }}
+            aria-label="Открыть настройки"
+            title="Настройки"
+            className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
+              settingsOpen
+                ? 'bg-amber-500 text-slate-950 border-amber-300'
+                : 'bg-[#0e172a]/90 text-slate-100 border-slate-700 hover:border-amber-400/60'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={(e) => {
+              e.currentTarget.blur();
               onTogglePause();
             }}
             aria-label="Пауза"
@@ -303,8 +327,28 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       )}
 
-      {/* Nearby Stool Prompt when no speech card is currently open */}
-      {!hud.stoolSpeech && hud.nearbyStool && !inventoryOpen && (
+      {/* Nearby Chest Prompt when no speech/modal is covering */}
+      {!hud.stoolSpeech && !hud.activeChest && hud.nearbyChest && !inventoryOpen && !settingsOpen && (
+        <div className="pointer-events-auto fixed bottom-24 left-1/2 -translate-x-1/2 bg-[#0e172a]/92 border border-amber-400/55 rounded-xl px-3.5 py-1.5 shadow-lg flex items-center gap-2.5 text-xs text-amber-100">
+          <span>
+            {hud.nearbyChest.hasLoot ? 'Рядом сундук с сокровищами' : 'Рядом пустой сундук'}
+          </span>
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenChest();
+            }}
+            className="px-2.5 py-1 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold cursor-pointer"
+          >
+            Открыть [F / ПКМ]
+          </button>
+        </div>
+      )}
+
+      {/* Nearby Stool Prompt when no speech/chest card is currently open */}
+      {!hud.stoolSpeech && !hud.nearbyChest && hud.nearbyStool && !inventoryOpen && !settingsOpen && (
         <div className="pointer-events-auto fixed bottom-24 left-1/2 -translate-x-1/2 bg-[#0e172a]/92 border border-amber-400/40 rounded-xl px-3.5 py-1.5 shadow-lg flex items-center gap-2.5 text-xs text-amber-100">
           <span>Рядом табуретка</span>
           <button
@@ -328,11 +372,11 @@ export const GameHud: React.FC<GameHudProps> = ({
             Как играть в Котаррию
           </div>
           <p><strong className="text-white">A / D</strong> — бег влево/вправо, <strong className="text-white">Space / W</strong> — прыжок, <strong className="text-white">S</strong> — спуск с платформ.</p>
-          <p><strong className="text-white">ЛКМ</strong> — бить оружием или копать киркой. <strong className="text-white">ПКМ</strong> (или режим Стройка [B]) — ставить блоки, задние стены, факелы и открывать двери.</p>
+          <p><strong className="text-white">ЛКМ</strong> — бить оружием или копать киркой. <strong className="text-white">ПКМ</strong> (или режим Стройка [B]) — ставить блоки, задние стены, факелы и открывать двери/сундуки.</p>
+          <p><strong className="text-white">Сундуки и боссы:</strong> слева и справа от спавна есть сундуки с призывалками Котулху и Котового Червя. Нажми <strong className="text-white">F</strong> или <strong className="text-white">ПКМ</strong> рядом, чтобы открыть!</p>
           <p><strong className="text-white">Выбросить предмет:</strong> клавиша <strong className="text-white">Q</strong> выбросит 1 предмет из руки (<strong className="text-white">Shift+Q</strong> — весь стек), а в рюкзаке <strong className="text-white">[E]</strong> (63 слота!) можно выбросить любой слот.</p>
           <p><strong className="text-white">Табуретка:</strong> погладь её (<strong className="text-white">ЛКМ</strong> или <strong className="text-white">F</strong> рядом), а затем нажми на неё <strong className="text-white">ПКМ</strong>.</p>
           <p><strong className="text-white">Постройка дома:</strong> возведите стены из досок/кирпича, закройте фон задней стеной и поставьте факел — внутри начнёт восстанавливаться здоровье!</p>
-          <p><strong className="text-white">Крафт [E]:</strong> поставьте Верстак, Печь и Наковальню и встаньте рядом, чтобы открыть мощные мечи, луки, посохи и лазер!</p>
         </div>
       )}
 
@@ -343,6 +387,7 @@ export const GameHud: React.FC<GameHudProps> = ({
             {selectedItem.name}
             {selectedItem.damage ? ` · Урон ${selectedItem.damage}` : ''}
             {selectedItem.manaCost ? ` · Мана ${selectedItem.manaCost}` : ''}
+            {selectedItem.category === 'summon' ? ' · ЛКМ / ПКМ призвать босса' : ''}
             {selectedItem.placesTile !== undefined || selectedItem.placesWall !== undefined
               ? ' · ПКМ поставить'
               : ''}

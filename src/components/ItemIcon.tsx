@@ -10,7 +10,7 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
   const item = ITEMS[itemId];
   if (!item) return null;
 
-  // Use user-supplied ornate sword texture for Zazu Sword & Ruby Greatsword
+  // Use user-supplied textures for swords & boss summoners (Kotulhu & Cat Worm)
   if (item.textureSrc === '/assets/aistudio/sword_03ad3b16.png') {
     return (
       <div
@@ -27,6 +27,25 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
             filter: item.id === 'ruby_greatsword' ? 'hue-rotate(155deg) saturate(1.4)' : undefined,
           }}
           className="object-contain rotate-45 max-w-none"
+        />
+      </div>
+    );
+  }
+
+  if (
+    item.textureSrc === '/assets/aistudio/wait_518dc071.jpg' ||
+    item.textureSrc === '/assets/aistudio/chine_5a03a968.jpg'
+  ) {
+    return (
+      <div
+        style={{ width: size, height: size }}
+        className="rounded-full overflow-hidden border border-amber-300/80 shadow-sm pointer-events-none select-none shrink-0"
+      >
+        <img
+          src={item.textureSrc}
+          alt={item.name}
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover"
         />
       </div>
     );
@@ -182,6 +201,53 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
         <rect x="7" y="11" width="2.5" height="9" fill="#78350f" stroke="#0f172a" strokeWidth="1" />
         <rect x="14.5" y="11" width="2.5" height="9" fill="#78350f" stroke="#0f172a" strokeWidth="1" />
         <rect x="8.5" y="15" width="7" height="2" fill="#78350f" />
+      </svg>
+    );
+  }
+
+  // Treasure Chest
+  if (item.id === 'chest_item') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <rect x="4" y="7" width="16" height="13" rx="2" fill="#78350f" stroke="#0f172a" strokeWidth="1.4" />
+        <rect x="5" y="8" width="14" height="5" fill={item.color} />
+        <rect x="4" y="12" width="16" height="2.2" fill={item.accent} />
+        <rect x="10.5" y="11" width="3" height="4.5" rx="0.6" fill="#fef08a" stroke="#0f172a" strokeWidth="0.9" />
+      </svg>
+    );
+  }
+
+  // Boss Summoners (SVG icons for King Slime, Skele-Cat, Eye Boss)
+  if (item.category === 'summon') {
+    if (item.id === 'summon_king_slime') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <path
+            d="M4 17 L6 8 L10 12 L12 6 L14 12 L18 8 L20 17 Z"
+            fill={item.accent}
+            stroke="#0f172a"
+            strokeWidth="1.4"
+            strokeLinejoin="round"
+          />
+          <circle cx="12" cy="14" r="2.2" fill={item.color} />
+        </svg>
+      );
+    }
+    if (item.id === 'summon_skele_cat') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <path d="M5 12 L4 5 L9 8 L15 8 L20 5 L19 12 A7 7 0 0 1 5 12 Z" fill={item.color} stroke="#0f172a" strokeWidth="1.4" />
+          <circle cx="9.5" cy="12" r="2" fill={item.accent} />
+          <circle cx="14.5" cy="12" r="2" fill={item.accent} />
+          <rect x="9" y="16" width="6" height="3" fill="#0f172a" />
+        </svg>
+      );
+    }
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <circle cx="12" cy="12" r="8" fill="#f8fafc" stroke="#7f1d1d" strokeWidth="1.8" />
+        <circle cx="12" cy="12" r="4" fill={item.color} />
+        <circle cx="12" cy="12" r="1.8" fill="#0f172a" />
       </svg>
     );
   }

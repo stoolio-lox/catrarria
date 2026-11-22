@@ -17,6 +17,8 @@ export interface LoadedTextures {
   catImg: HTMLImageElement | null;
   skyImg: HTMLImageElement | null;
   swordImg: HTMLImageElement | null;
+  kotulhuImg: HTMLImageElement | null;
+  catWormImg: HTMLImageElement | null;
   grassTufts: HTMLImageElement[];
 }
 
@@ -80,6 +82,8 @@ export function loadGameTextures(onReady?: () => void): LoadedTextures {
     catImg: null,
     skyImg: null,
     swordImg: null,
+    kotulhuImg: null,
+    catWormImg: null,
     grassTufts: [],
   };
 
@@ -117,6 +121,34 @@ export function loadGameTextures(onReady?: () => void): LoadedTextures {
   load('/assets/aistudio/sword_03ad3b16.png', (img) => {
     canvasToImage(cropOpaqueCanvas(img, false), (ready) => {
       tex.swordImg = ready;
+      onReady?.();
+    });
+  });
+  load('/assets/aistudio/wait_518dc071.jpg', (img) => {
+    const c = document.createElement('canvas');
+    c.width = 96;
+    c.height = 96;
+    const cctx = c.getContext('2d');
+    const size = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+    const sx = ((img.naturalWidth || img.width) - size) / 2;
+    const sy = ((img.naturalHeight || img.height) - size) / 2;
+    cctx?.drawImage(img, sx, sy, size, size, 0, 0, 96, 96);
+    canvasToImage(c, (ready) => {
+      tex.kotulhuImg = ready;
+      onReady?.();
+    });
+  });
+  load('/assets/aistudio/chine_5a03a968.jpg', (img) => {
+    const c = document.createElement('canvas');
+    c.width = 96;
+    c.height = 96;
+    const cctx = c.getContext('2d');
+    const size = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+    const sx = ((img.naturalWidth || img.width) - size) / 2;
+    const sy = ((img.naturalHeight || img.height) - size) / 2;
+    cctx?.drawImage(img, sx, sy, size, size, 0, 0, 96, 96);
+    canvasToImage(c, (ready) => {
+      tex.catWormImg = ready;
       onReady?.();
     });
   });
@@ -342,7 +374,9 @@ export function renderGameFrame(
       const y = ty * TILE_SIZE;
       const lightVal = Math.max(0.1, Math.min(1, world.light[idx]));
 
-      drawTile(ctx, tile, x, y, tx, ty, elapsed, textures);
+      const chestHasLoot =
+        tile === TileType.Chest && (world.chests[idx]?.length ?? 0) > 0;
+      drawTile(ctx, tile, x, y, tx, ty, elapsed, textures, chestHasLoot);
 
       // Crack overlay if damaged
       const dmg = tileDamageMap.get(idx);
@@ -404,7 +438,7 @@ export function renderGameFrame(
 
   // 5. Render Enemies
   for (const enemy of enemies) {
-    drawEnemy(ctx, enemy, elapsed);
+    drawEnemy(ctx, enemy, elapsed, textures);
   }
 
   // 6. Render Cat Hero (Zazu texture + animated body/paws/tail + held/swinging weapon)
@@ -555,6 +589,7 @@ function drawTile(
   ty: number,
   elapsed: number,
   textures: LoadedTextures,
+  chestHasLoot = false,
 ): void {
   if (tile === TileType.Torch) {
     ctx.fillStyle = '#78350f';
@@ -664,6 +699,41 @@ function drawTile(
     // Cushion / wood highlight
     ctx.fillStyle = '#fbbf24';
     ctx.fillRect(x + 6, y + 13, 20, 2);
+    return;
+  }
+
+  if (tile === TileType.Chest) {
+    // Ornate wooden & gold treasure chest
+    ctx.fillStyle = '#78350f';
+    ctx.strokeStyle = '#1c1917';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(x + 3, y + 10, 26, 21, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // Lid highlight
+    ctx.fillStyle = '#b45309';
+    ctx.fillRect(x + 4, y + 11, 24, 7);
+
+    // Gold bands & lock plate
+    ctx.fillStyle = '#eab308';
+    ctx.fillRect(x + 3, y + 17, 26, 3);
+    ctx.fillRect(x + 7, y + 10, 3, 21);
+    ctx.fillRect(x + 22, y + 10, 3, 21);
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(x + 13, y + 16, 6, 7);
+    ctx.fillStyle = '#1c1917';
+    ctx.fillRect(x + 15, y + 18, 2, 3);
+
+    // Subtle golden sparkle when chest contains loot
+    if (chestHasLoot) {
+      const pulse = 0.5 + 0.5 * Math.sin(elapsed * 5 + tx);
+      ctx.fillStyle = `rgba(254, 240, 138, ${(0.35 + pulse * 0.55).toFixed(2)})`;
+      ctx.beginPath();
+      ctx.arc(x + 25, y + 8, 2.5 + pulse, 0, Math.PI * 2);
+      ctx.fill();
+    }
     return;
   }
 
@@ -928,7 +998,12 @@ function drawHeldWeapon(
   ctx.restore();
 }
 
-function drawEnemy(ctx: CanvasRenderingContext2D, enemy: EnemyEntity, elapsed: number): void {
+function drawEnemy(
+  ctx: CanvasRenderingContext2D,
+  enemy: EnemyEntity,
+  elapsed: number,
+  textures: LoadedTextures,
+): void {
   const cx = enemy.x + enemy.width / 2;
   const cy = enemy.y + enemy.height / 2;
   const isFlash = enemy.hitFlashTimer > 0;
@@ -1012,6 +1087,185 @@ function drawEnemy(ctx: CanvasRenderingContext2D, enemy: EnemyEntity, elapsed: n
     ctx.rotate(isWindup ? -0.9 * enemy.facing : 0.3 * enemy.facing);
     ctx.fillRect(-2, -16, 4, 18);
     ctx.restore();
+  } else if (enemy.kind === 'king_slime') {
+    // Giant crowned Cat-Slime Boss!
+    const squish = isWindup ? 0.78 : 1 + Math.sin(enemy.animPhase) * 0.06;
+    ctx.fillStyle = isFlash ? '#ffffff' : isWindup ? '#86efac' : '#16a34a';
+    ctx.strokeStyle = '#052e16';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(
+      cx,
+      enemy.y + enemy.height - (enemy.height * squish) / 2,
+      (enemy.width / 2) / squish,
+      (enemy.height / 2) * squish,
+      0,
+      Math.PI,
+      0,
+    );
+    ctx.lineTo(enemy.x + enemy.width, enemy.y + enemy.height);
+    ctx.lineTo(enemy.x, enemy.y + enemy.height);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Cute slime cat ears + gold crown
+    ctx.fillStyle = '#eab308';
+    ctx.strokeStyle = '#713f12';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - 18, enemy.y + 6);
+    ctx.lineTo(cx - 20, enemy.y - 12);
+    ctx.lineTo(cx - 8, enemy.y - 3);
+    ctx.lineTo(cx, enemy.y - 14);
+    ctx.lineTo(cx + 8, enemy.y - 3);
+    ctx.lineTo(cx + 20, enemy.y - 12);
+    ctx.lineTo(cx + 18, enemy.y + 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Ruby jewel in crown
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(cx, enemy.y - 2, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes & cat whiskers
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(cx - 12 + enemy.facing * 4, cy - 2, 6, 7);
+    ctx.fillRect(cx + 6 + enemy.facing * 4, cy - 2, 6, 7);
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(cx - 11 + enemy.facing * 4, cy - 1, 2, 2);
+    ctx.fillRect(cx + 7 + enemy.facing * 4, cy - 1, 2, 2);
+  } else if (enemy.kind === 'kotulhu') {
+    // Kotulhu Boss: uses user's bow-tie cat portrait with eldritch tentacles & crimson aura!
+    const isPhase2 = enemy.hp < enemy.maxHp * 0.5;
+    const rad = enemy.width / 2;
+
+    // Tentacles behind head
+    ctx.strokeStyle = isPhase2 ? '#dc2626' : '#7f1d1d';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    for (let t = -2; t <= 2; t++) {
+      const sway = Math.sin(elapsed * 7 + t * 1.4) * 9;
+      ctx.beginPath();
+      ctx.moveTo(cx + t * 9, cy + rad * 0.4);
+      ctx.quadraticCurveTo(cx + t * 14 + sway, cy + rad + 12, cx + t * 18 - sway, cy + rad + 24);
+      ctx.stroke();
+    }
+
+    // Aura ring
+    ctx.strokeStyle = isWindup || isPhase2 ? '#ef4444' : '#f43f5e';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad + 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (textures.kotulhuImg && textures.kotulhuImg.complete && !isFlash) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(textures.kotulhuImg, cx - rad, cy - rad, rad * 2, rad * 2);
+      if (isPhase2) {
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.22)';
+        ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+      }
+      ctx.restore();
+    } else {
+      ctx.fillStyle = isFlash ? '#ffffff' : '#991b1b';
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (enemy.kind === 'cat_worm') {
+    // Cat Worm Boss: segmented body drawn back-to-front + bamboo-hat cat portrait head!
+    if (enemy.segments) {
+      for (let s = enemy.segments.length - 1; s >= 0; s--) {
+        const seg = enemy.segments[s];
+        const segRad = Math.max(12, 22 - s * 1.1);
+        ctx.fillStyle = isFlash ? '#ffffff' : s % 2 === 0 ? '#78350f' : '#b45309';
+        ctx.strokeStyle = '#fde68a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(seg.x, seg.y, segRad, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(seg.x, seg.y, segRad * 0.35, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    const rad = enemy.width / 2;
+    ctx.strokeStyle = isWindup ? '#ef4444' : '#f59e0b';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad + 2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (textures.catWormImg && textures.catWormImg.complete && !isFlash) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(textures.catWormImg, cx - rad, cy - rad, rad * 2, rad * 2);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = isFlash ? '#ffffff' : '#d97706';
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (enemy.kind === 'skele_cat') {
+    // Skele-Cat Boss (Кототрон): skull cat head + 2 orbiting bony claws!
+    const armAngle = elapsed * 3.2;
+    for (const side of [-1, 1]) {
+      const hx = cx + side * 44 + Math.cos(armAngle * side) * 14;
+      const hy = cy + 16 + Math.sin(armAngle * 1.3) * 14;
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(cx + side * 16, cy + 8);
+      ctx.lineTo(hx, hy);
+      ctx.stroke();
+      ctx.fillStyle = isFlash ? '#ffffff' : '#f1f5f9';
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(hx, hy, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Skull cat head + ears
+    ctx.fillStyle = isFlash ? '#ffffff' : '#e2e8f0';
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - 20, cy - 10);
+    ctx.lineTo(cx - 26, cy - 36);
+    ctx.lineTo(cx - 6, cy - 22);
+    ctx.lineTo(cx + 6, cy - 22);
+    ctx.lineTo(cx + 26, cy - 36);
+    ctx.lineTo(cx + 20, cy - 10);
+    ctx.arc(cx, cy, enemy.width / 2 - 4, -0.3, Math.PI + 0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Glowing purple skull eyes & fangs
+    ctx.fillStyle = isWindup ? '#ef4444' : '#9333ea';
+    ctx.beginPath();
+    ctx.arc(cx - 10, cy - 4, 6, 0, Math.PI * 2);
+    ctx.arc(cx + 10, cy - 4, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(cx - 10, cy + 12, 4, 8);
+    ctx.fillRect(cx - 2, cy + 12, 4, 8);
+    ctx.fillRect(cx + 6, cy + 12, 4, 8);
   } else if (enemy.kind === 'eye_boss') {
     ctx.fillStyle = isFlash ? '#ffffff' : isWindup ? '#fca5a5' : '#f8fafc';
     ctx.strokeStyle = '#7f1d1d';

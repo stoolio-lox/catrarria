@@ -1,8 +1,10 @@
 export type GamePhase = 'title' | 'playing' | 'paused' | 'gameover';
 
 export const TILE_SIZE = 32;
-export const WORLD_WIDTH = 160;
-export const WORLD_HEIGHT = 76;
+export const WORLD_WIDTH = 360;
+export const WORLD_HEIGHT = 110;
+
+export type BiomeType = 'forest' | 'snow' | 'crimson';
 
 export enum TileType {
   Air = 0,
@@ -29,6 +31,22 @@ export enum TileType {
   Chest = 21,
   RoofTile = 22,
   Stool = 23,
+  Snow = 24,
+  Ice = 25,
+  SnowBrick = 26,
+  CrimsonGrass = 27,
+  CrimsonDirt = 28,
+  Crimstone = 29,
+  CrimsonBrick = 30,
+  CrimsonWood = 31,
+  CrimsonLeaves = 32,
+  Sand = 33,
+  SandstoneBrick = 34,
+  Obsidian = 35,
+  Marble = 36,
+  CopperOre = 37,
+  CrystalBlock = 38,
+  WoodBeam = 39,
 }
 
 export enum WallType {
@@ -37,9 +55,12 @@ export enum WallType {
   WoodWall = 2,
   StoneWall = 3,
   BrickWall = 4,
+  SnowWall = 5,
+  CrimsonWall = 6,
+  MarbleWall = 7,
 }
 
-export type ItemCategory = 'tool' | 'weapon' | 'block' | 'wall' | 'consumable' | 'material' | 'station';
+export type ItemCategory = 'tool' | 'weapon' | 'block' | 'wall' | 'consumable' | 'material' | 'station' | 'summon';
 export type WeaponKind = 'melee' | 'spear' | 'bow' | 'magic' | 'boomerang' | 'laser' | 'bomb';
 export type CraftingStation = 'hand' | 'workbench' | 'furnace' | 'anvil';
 
@@ -68,10 +89,11 @@ export interface ItemDef {
   // Placement properties
   placesTile?: TileType;
   placesWall?: WallType;
-  // Consumable properties
+  // Consumable / Summon properties
   healAmount?: number;
   manaAmount?: number;
   defenseBonus?: number;
+  summonsBoss?: EnemyKind;
 }
 
 export interface InventorySlot {
@@ -118,7 +140,16 @@ export interface PlayerState {
   houseValid: boolean;
 }
 
-export type EnemyKind = 'slime' | 'bat' | 'goblin' | 'skeleton' | 'eye_boss';
+export type EnemyKind =
+  | 'slime'
+  | 'bat'
+  | 'goblin'
+  | 'skeleton'
+  | 'king_slime'
+  | 'kotulhu'
+  | 'cat_worm'
+  | 'skele_cat'
+  | 'eye_boss';
 
 export interface EnemyEntity {
   id: number;
@@ -141,6 +172,8 @@ export interface EnemyEntity {
   hitFlashTimer: number;
   koTimer: number;
   animPhase: number;
+  segments?: { x: number; y: number }[];
+  summonTimer?: number;
   drops: { itemId: string; min: number; max: number; chance: number }[];
 }
 
@@ -209,6 +242,8 @@ export interface WorldData {
   surfaceHeights: Int16Array;
   /** Light level 0..1 per tile computed around sky & torches */
   light: Float32Array;
+  /** Treasure chest inventories keyed by tile index */
+  chests: Record<number, InventorySlot[]>;
 }
 
 export interface RunStats {
@@ -218,6 +253,16 @@ export interface RunStats {
   blocksPlaced: number;
   itemsCrafted: number;
   bossDefeated: boolean;
+}
+
+export interface GameSettings {
+  musicEnabled: boolean;
+  musicVolume: number; // 0..1
+  sfxEnabled: boolean;
+  sfxVolume: number; // 0..1
+  screenShake: boolean;
+  particlesEnabled: boolean;
+  autopauseInMenus: boolean;
 }
 
 export interface HudSnapshot {
@@ -231,6 +276,11 @@ export interface HudSnapshot {
   timeOfDay: number; // 0..1 (0.25 = noon, 0.75 = midnight)
   isNight: boolean;
   depthMeters: number;
+  playerTileX: number;
+  playerTileY: number;
+  biome: BiomeType;
+  worldWidth: number;
+  worldHeight: number;
   houseValid: boolean;
   nearbyStations: CraftingStation[];
   hotbar: (InventorySlot | null)[];
@@ -242,6 +292,12 @@ export interface HudSnapshot {
   toastMessage: string | null;
   godMode: boolean;
   nearbyStool: boolean;
+  nearbyChest: { tx: number; ty: number; hasLoot: boolean } | null;
+  activeChest: {
+    tx: number;
+    ty: number;
+    items: (InventorySlot | null)[];
+  } | null;
   stoolSpeech: {
     stage: 'petted' | 'copied';
     text: string;

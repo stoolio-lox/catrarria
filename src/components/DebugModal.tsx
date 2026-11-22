@@ -11,7 +11,7 @@ interface DebugModalProps {
   onToggleGodMode: () => void;
   onRestoreVitals: () => void;
   onSetTime: (preset: 'morning' | 'noon' | 'night') => void;
-  onGiveKit: (kind: 'weapons' | 'resources' | 'stool') => void;
+  onGiveKit: (kind: 'weapons' | 'resources' | 'stool' | 'summons') => void;
   onSpawnEnemy: (kind: EnemyKind) => void;
   onClearEnemies: () => void;
   onTeleportSpawn: () => void;
@@ -198,7 +198,7 @@ export const DebugModal: React.FC<DebugModalProps> = ({
                 <Sparkles className="w-3.5 h-3.5 text-sky-400" />
                 Выдача предметов
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <button
                   type="button"
                   onClick={() => onGiveKit('weapons')}
@@ -211,14 +211,21 @@ export const DebugModal: React.FC<DebugModalProps> = ({
                   onClick={() => onGiveKit('resources')}
                   className="px-3 py-2.5 rounded-xl border bg-slate-900 border-slate-700 hover:border-emerald-400/60 text-emerald-200 text-xs font-semibold cursor-pointer"
                 >
-                  Ресурсы и станции
+                  Ресурсы
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onGiveKit('summons')}
+                  className="px-3 py-2.5 rounded-xl border bg-slate-900 border-slate-700 hover:border-rose-400/60 text-rose-200 text-xs font-semibold cursor-pointer"
+                >
+                  Призывалки
                 </button>
                 <button
                   type="button"
                   onClick={() => onGiveKit('stool')}
                   className="px-3 py-2.5 rounded-xl border bg-slate-900 border-slate-700 hover:border-pink-400/60 text-pink-200 text-xs font-semibold cursor-pointer"
                 >
-                  Выдать табуретку
+                  Табуретка
                 </button>
               </div>
             </section>
@@ -227,7 +234,7 @@ export const DebugModal: React.FC<DebugModalProps> = ({
             <section className="space-y-2.5">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                 <Swords className="w-3.5 h-3.5 text-rose-400" />
-                Призыв монстров
+                Призыв монстров и боссов
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <button
@@ -260,18 +267,46 @@ export const DebugModal: React.FC<DebugModalProps> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => onSpawnEnemy('king_slime')}
+                  className="px-3 py-2 rounded-xl border bg-emerald-950/50 border-emerald-500/40 hover:border-emerald-400 text-emerald-200 text-xs font-semibold cursor-pointer"
+                >
+                  + Босс Король Слизней
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSpawnEnemy('kotulhu')}
+                  className="px-3 py-2 rounded-xl border bg-rose-950/50 border-rose-500/40 hover:border-rose-400 text-rose-200 text-xs font-semibold cursor-pointer"
+                >
+                  + Босс Котулху
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSpawnEnemy('cat_worm')}
+                  className="px-3 py-2 rounded-xl border bg-amber-950/50 border-amber-500/40 hover:border-amber-400 text-amber-200 text-xs font-semibold cursor-pointer"
+                >
+                  + Котовый Червь
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSpawnEnemy('skele_cat')}
+                  className="px-3 py-2 rounded-xl border bg-purple-950/50 border-purple-500/40 hover:border-purple-400 text-purple-200 text-xs font-semibold cursor-pointer"
+                >
+                  + Босс Кототрон
+                </button>
+                <button
+                  type="button"
                   onClick={() => onSpawnEnemy('eye_boss')}
                   className="px-3 py-2 rounded-xl border bg-rose-950/50 border-rose-500/40 hover:border-rose-400 text-rose-200 text-xs font-semibold cursor-pointer"
                 >
-                  + Босс Око
+                  + Босс Око Ночи
                 </button>
                 <button
                   type="button"
                   onClick={onClearEnemies}
-                  className="px-3 py-2 rounded-xl border bg-slate-900 border-slate-700 hover:border-emerald-400/60 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer"
+                  className="px-3 py-2 rounded-xl border bg-slate-900 border-slate-700 hover:border-emerald-400/60 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer sm:col-span-3"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  <span>Очистить</span>
+                  <span>Очистить всех врагов</span>
                 </button>
               </div>
             </section>
