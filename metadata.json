@@ -1,0 +1,6 @@
+{
+  "name": "Котаррия",
+  "description": "2D-песочница в духе Terraria про кота: копай, строй уютный дом, крафти арсенал оружия и сражайся с монстрами.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
