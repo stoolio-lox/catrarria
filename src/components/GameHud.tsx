@@ -21,7 +21,9 @@ interface GameHudProps {
   onOpenSettings: () => void;
   onSummonBoss: () => void;
   onOpenChest: () => void;
+  onOpenNpc: () => void;
   onPetStool: () => void;
+  onToggleDoor: () => void;
   onDismissStoolSpeech: () => void;
   onCopyStoolUrl: () => void;
   onDropSelected: (dropAll: boolean) => void;
@@ -44,7 +46,9 @@ export const GameHud: React.FC<GameHudProps> = ({
   onOpenSettings,
   onSummonBoss,
   onOpenChest,
+  onOpenNpc,
   onPetStool,
+  onToggleDoor,
   onDismissStoolSpeech,
   onCopyStoolUrl,
   onDropSelected,
@@ -98,13 +102,36 @@ export const GameHud: React.FC<GameHudProps> = ({
               />
             </div>
 
-            {/* Clean Typographic Metadata (no pills!) */}
-            <div className="flex items-center gap-2 text-[11px] text-slate-300 font-mono-num">
+            {hud.equipmentBonuses.hasWings && (
+              <div className="mb-1.5">
+                <div className="flex items-center justify-between text-[10px] mb-0.5">
+                  <span className="font-medium text-cyan-200">ПОЛЁТ КРЫЛЬЕВ</span>
+                  <span className="font-mono-num text-cyan-100">
+                    {Math.round((hud.wingFuel / Math.max(0.1, hud.wingFuelMax)) * 100)}%
+                  </span>
+                </div>
+                <div className="w-full h-1 bg-slate-900 rounded-sm overflow-hidden border border-slate-700">
+                  <div
+                    className="h-full bg-cyan-300 transition-[width] duration-75"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, (hud.wingFuel / Math.max(0.1, hud.wingFuelMax)) * 100))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Clean Typographic Metadata */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-300 font-mono-num">
               <span>День {hud.dayCount} · {hud.isNight ? 'Ночь' : 'День'}</span>
               <span aria-hidden="true">/</span>
               <span>Броня {hud.defense}</span>
               <span aria-hidden="true">/</span>
-              <span>{hud.houseValid ? 'В доме' : `${hud.depthMeters}м`}</span>
+              <span className="text-amber-300 font-semibold">Монеты {hud.coins}</span>
+              <span aria-hidden="true">/</span>
+              <span>
+                {hud.houseValid ? 'В доме' : `${hud.depthMeters}м`} · Дома {hud.validHouseCount}
+              </span>
               {hud.godMode && (
                 <>
                   <span aria-hidden="true">/</span>
@@ -270,9 +297,9 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       </div>
 
-      {/* Subtle Toast Banner anchored at top-center away from cat hero */}
+      {/* Subtle Toast Banner anchored below top HUD stats away from cat hero */}
       {hud.toastMessage && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-[#0e172a]/95 border border-amber-400/50 text-amber-100 px-4 py-2 rounded-lg text-sm font-medium shadow-lg whitespace-nowrap">
+        <div className="fixed top-28 left-1/2 -translate-x-1/2 bg-[#0e172a]/95 border border-amber-400/50 text-amber-100 px-4 py-2 rounded-lg text-sm font-medium shadow-lg whitespace-nowrap">
           {hud.toastMessage}
         </div>
       )}
@@ -282,7 +309,7 @@ export const GameHud: React.FC<GameHudProps> = ({
         <div
           role="status"
           aria-live="polite"
-          className="pointer-events-auto fixed bottom-24 left-1/2 -translate-x-1/2 w-[min(92vw,480px)] bg-[#0e172a]/96 border-2 border-amber-400/70 rounded-2xl p-3.5 shadow-2xl flex items-start gap-3"
+          className="pointer-events-auto fixed bottom-28 left-1/2 -translate-x-1/2 w-[min(92vw,480px)] bg-[#0e172a]/96 border-2 border-amber-400/70 rounded-2xl p-3.5 shadow-2xl flex items-start gap-3"
         >
           <div className="w-10 h-10 rounded-xl bg-slate-900 border border-amber-400/40 flex items-center justify-center shrink-0">
             <ItemIcon itemId="stool_item" size={26} />
@@ -327,43 +354,87 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       )}
 
-      {/* Nearby Chest Prompt when no speech/modal is covering */}
-      {!hud.stoolSpeech && !hud.activeChest && hud.nearbyChest && !inventoryOpen && !settingsOpen && (
-        <div className="pointer-events-auto fixed bottom-24 left-1/2 -translate-x-1/2 bg-[#0e172a]/92 border border-amber-400/55 rounded-xl px-3.5 py-1.5 shadow-lg flex items-center gap-2.5 text-xs text-amber-100">
-          <span>
-            {hud.nearbyChest.hasLoot ? 'Рядом сундук с сокровищами' : 'Рядом пустой сундук'}
-          </span>
-          <button
-            type="button"
-            tabIndex={-1}
-            onClick={(e) => {
-              e.currentTarget.blur();
-              onOpenChest();
-            }}
-            className="px-2.5 py-1 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold cursor-pointer"
-          >
-            Открыть [F / ПКМ]
-          </button>
-        </div>
-      )}
+      {/* Nearby Interactables Prompt Row (Chest / NPC Villager / Stool / Door) */}
+      {!hud.stoolSpeech &&
+        !hud.activeChest &&
+        !hud.activeNpc &&
+        !inventoryOpen &&
+        !settingsOpen &&
+        (hud.nearbyChest || hud.nearbyNpc || hud.nearbyStool || hud.nearbyDoor) && (
+          <div className="pointer-events-auto fixed bottom-28 left-1/2 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 max-w-[94vw]">
+            {hud.nearbyChest && (
+              <div className="bg-[#0e172a]/92 border border-amber-400/55 rounded-xl px-3 py-1.5 shadow-lg flex items-center gap-2 text-xs text-amber-100">
+                <span>
+                  {hud.nearbyChest.hasLoot ? 'Сундук с сокровищами' : 'Пустой сундук'}
+                </span>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onOpenChest();
+                  }}
+                  className="px-2.5 py-1 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold cursor-pointer"
+                >
+                  Открыть [F / ПКМ]
+                </button>
+              </div>
+            )}
 
-      {/* Nearby Stool Prompt when no speech/chest card is currently open */}
-      {!hud.stoolSpeech && !hud.nearbyChest && hud.nearbyStool && !inventoryOpen && !settingsOpen && (
-        <div className="pointer-events-auto fixed bottom-24 left-1/2 -translate-x-1/2 bg-[#0e172a]/92 border border-amber-400/40 rounded-xl px-3.5 py-1.5 shadow-lg flex items-center gap-2.5 text-xs text-amber-100">
-          <span>Рядом табуретка</span>
-          <button
-            type="button"
-            tabIndex={-1}
-            onClick={(e) => {
-              e.currentTarget.blur();
-              onPetStool();
-            }}
-            className="px-2.5 py-1 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold cursor-pointer"
-          >
-            Погладить [F / ЛКМ]
-          </button>
-        </div>
-      )}
+            {hud.nearbyNpc && (
+              <div className="bg-[#0e172a]/92 border border-sky-400/55 rounded-xl px-3 py-1.5 shadow-lg flex items-center gap-2 text-xs text-sky-100">
+                <span>
+                  {hud.nearbyNpc.title} {hud.nearbyNpc.name}
+                </span>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onOpenNpc();
+                  }}
+                  className="px-2.5 py-1 rounded-md bg-sky-400 hover:bg-sky-300 text-slate-950 font-semibold cursor-pointer"
+                >
+                  Поговорить [F / ПКМ]
+                </button>
+              </div>
+            )}
+
+            {hud.nearbyStool && (
+              <div className="bg-[#0e172a]/92 border border-amber-400/45 rounded-xl px-3 py-1.5 shadow-lg flex items-center gap-2 text-xs text-amber-100">
+                <span>Табуретка</span>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onPetStool();
+                  }}
+                  className="px-2.5 py-1 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold cursor-pointer"
+                >
+                  Погладить [ЛКМ]
+                </button>
+              </div>
+            )}
+
+            {hud.nearbyDoor && (
+              <div className="bg-[#0e172a]/92 border border-orange-400/50 rounded-xl px-3 py-1.5 shadow-lg flex items-center gap-2 text-xs text-orange-100">
+                <span>Дверь</span>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onToggleDoor();
+                  }}
+                  className="px-2.5 py-1 rounded-md bg-orange-400 hover:bg-orange-300 text-slate-950 font-semibold cursor-pointer"
+                >
+                  {hud.nearbyDoor.isOpen ? 'Закрыть [ПКМ / F]' : 'Открыть [ПКМ / F]'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
       {/* Optional Compact Help Card */}
       {helpOpen && (
@@ -371,12 +442,12 @@ export const GameHud: React.FC<GameHudProps> = ({
           <div className="font-display font-bold text-sm text-amber-300 mb-1">
             Как играть в Котаррию
           </div>
-          <p><strong className="text-white">A / D</strong> — бег влево/вправо, <strong className="text-white">Space / W</strong> — прыжок, <strong className="text-white">S</strong> — спуск с платформ.</p>
-          <p><strong className="text-white">ЛКМ</strong> — бить оружием или копать киркой. <strong className="text-white">ПКМ</strong> (или режим Стройка [B]) — ставить блоки, задние стены, факелы и открывать двери/сундуки.</p>
-          <p><strong className="text-white">Сундуки и боссы:</strong> слева и справа от спавна есть сундуки с призывалками Котулху и Котового Червя. Нажми <strong className="text-white">F</strong> или <strong className="text-white">ПКМ</strong> рядом, чтобы открыть!</p>
-          <p><strong className="text-white">Выбросить предмет:</strong> клавиша <strong className="text-white">Q</strong> выбросит 1 предмет из руки (<strong className="text-white">Shift+Q</strong> — весь стек), а в рюкзаке <strong className="text-white">[E]</strong> (63 слота!) можно выбросить любой слот.</p>
-          <p><strong className="text-white">Табуретка:</strong> погладь её (<strong className="text-white">ЛКМ</strong> или <strong className="text-white">F</strong> рядом), а затем нажми на неё <strong className="text-white">ПКМ</strong>.</p>
-          <p><strong className="text-white">Постройка дома:</strong> возведите стены из досок/кирпича, закройте фон задней стеной и поставьте факел — внутри начнёт восстанавливаться здоровье!</p>
+          <p><strong className="text-white">A / D</strong> — бег, <strong className="text-white">Space / W</strong> — прыжок и подъём по верёвке, <strong className="text-white">S</strong> — спуск.</p>
+          <p><strong className="text-white">ЛКМ</strong> — бить/копать, <strong className="text-white">ПКМ</strong> (или [B] Стройка) — ставить блоки и открывать сундуки/говорить с жителями, <strong className="text-white">[G]</strong> — Крюк-кошка.</p>
+          <p><strong className="text-white">Дома и жители:</strong> поставь стены, фон, дверь, свет (факел/люстра), стол и стул — или активируй «Чертёж уютного дома» из рюкзака! К тебе поселятся Гид, Торговец, Медсестра, Подрывник и Дриада.</p>
+          <p><strong className="text-white">Штуки из Террарии:</strong> разбивай горшки под землёй ради монет, собирай Кристаллы Жизни, падающие ночью звёзды, Облако в бутылке, Ботинки Гермеса и Волшебное зеркало!</p>
+          <p><strong className="text-white">Табуретка:</strong> погладь её (<strong className="text-white">ЛКМ</strong>), а затем нажми <strong className="text-white">ПКМ</strong>.</p>
+          <p><strong className="text-white">Выбросить предмет:</strong> <strong className="text-white">Q</strong> (Shift+Q — весь стек), рюкзак на <strong className="text-white">[E]</strong> (63 слота).</p>
         </div>
       )}
 
@@ -387,7 +458,12 @@ export const GameHud: React.FC<GameHudProps> = ({
             {selectedItem.name}
             {selectedItem.damage ? ` · Урон ${selectedItem.damage}` : ''}
             {selectedItem.manaCost ? ` · Мана ${selectedItem.manaCost}` : ''}
+            {selectedItem.weaponKind === 'hook' ? ' · [G] / ЛКМ выстрелить крюком' : ''}
             {selectedItem.category === 'summon' ? ' · ЛКМ / ПКМ призвать босса' : ''}
+            {selectedItem.category === 'consumable' ? ' · ЛКМ / ПКМ применить' : ''}
+            {selectedItem.category === 'armor' || selectedItem.category === 'accessory'
+              ? ' · Надень в инвентаре [E]'
+              : ''}
             {selectedItem.placesTile !== undefined || selectedItem.placesWall !== undefined
               ? ' · ПКМ поставить'
               : ''}

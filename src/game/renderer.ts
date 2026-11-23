@@ -1,8 +1,11 @@
+import { drawBossEnemy } from './bossRenderer';
 import { ITEMS } from './catalog';
 import {
   DropEntity,
   EnemyEntity,
+  EquipmentState,
   FloatingText,
+  NpcEntity,
   Particle,
   PlayerState,
   ProjectileEntity,
@@ -11,7 +14,7 @@ import {
   WallType,
   WorldData,
 } from './types';
-import { getTileMaxDamage, isTileSolid } from './worldGen';
+import { getBiomeAtX, getTileMaxDamage, isTileSolid } from './worldGen';
 
 export interface LoadedTextures {
   catImg: HTMLImageElement | null;
@@ -184,6 +187,7 @@ export function loadGameTextures(onReady?: () => void): LoadedTextures {
 export interface RenderContextState {
   world: WorldData;
   player: PlayerState;
+  npcs: NpcEntity[];
   enemies: EnemyEntity[];
   projectiles: ProjectileEntity[];
   drops: DropEntity[];
@@ -200,6 +204,7 @@ export interface RenderContextState {
   hoverTileY: number;
   hoverInRange: boolean;
   selectedItemId: string | null;
+  equipment?: EquipmentState;
   textures: LoadedTextures;
   stoolSpeech?: { text: string; stage: 'petted' | 'copied' } | null;
 }
@@ -214,11 +219,27 @@ const TILE_PALETTE: Record<number, { fill: string; edge: string; speck?: string 
   [TileType.Brick]: { fill: '#b34b3c', edge: '#7f2f24', speck: '#d97a6c' },
   [TileType.RoofTile]: { fill: '#c2410c', edge: '#7c2d12', speck: '#fb923c' },
   [TileType.CoalOre]: { fill: '#575f6b', edge: '#334155', speck: '#0f172a' },
+  [TileType.CopperOre]: { fill: '#5c6470', edge: '#3f4652', speck: '#f97316' },
   [TileType.IronOre]: { fill: '#5c6470', edge: '#3d4450', speck: '#e2c4a8' },
   [TileType.GoldOre]: { fill: '#5e6573', edge: '#3f4652', speck: '#facc15' },
   [TileType.RubyOre]: { fill: '#525968', edge: '#373e4d', speck: '#f43f5e' },
   [TileType.Glass]: { fill: 'rgba(186, 230, 253, 0.35)', edge: '#e0f2fe' },
   [TileType.Platform]: { fill: '#b67d47', edge: '#7c5128' },
+  [TileType.Snow]: { fill: '#e0f2fe', edge: '#bae6fd', speck: '#ffffff' },
+  [TileType.Ice]: { fill: '#38bdf8', edge: '#0284c7', speck: '#e0f2fe' },
+  [TileType.SnowBrick]: { fill: '#cbd5e1', edge: '#94a3b8', speck: '#f8fafc' },
+  [TileType.CrimsonGrass]: { fill: '#691c22', edge: '#dc2626', speck: '#f87171' },
+  [TileType.CrimsonDirt]: { fill: '#6b1d24', edge: '#450a0a', speck: '#991b1b' },
+  [TileType.Crimstone]: { fill: '#7f1d1d', edge: '#450a0a', speck: '#ef4444' },
+  [TileType.CrimsonBrick]: { fill: '#991b1b', edge: '#450a0a', speck: '#f87171' },
+  [TileType.CrimsonWood]: { fill: '#5c1428', edge: '#3b0712', speck: '#be123c' },
+  [TileType.CrimsonLeaves]: { fill: '#991b1b', edge: '#7f1d1d', speck: '#fb7185' },
+  [TileType.Sand]: { fill: '#eab308', edge: '#ca8a04', speck: '#fef08a' },
+  [TileType.SandstoneBrick]: { fill: '#d97706', edge: '#92400e', speck: '#fde047' },
+  [TileType.Obsidian]: { fill: '#2e1065', edge: '#1e1b4b', speck: '#a855f7' },
+  [TileType.Marble]: { fill: '#e2e8f0', edge: '#cbd5e1', speck: '#ffffff' },
+  [TileType.CrystalBlock]: { fill: '#a21caf', edge: '#701a75', speck: '#f5d0fe' },
+  [TileType.WoodBeam]: { fill: '#6b4226', edge: '#451a03', speck: '#9a5f37' },
 };
 
 const WALL_COLORS: Record<number, string> = {
@@ -226,6 +247,9 @@ const WALL_COLORS: Record<number, string> = {
   [WallType.WoodWall]: '#593a22',
   [WallType.StoneWall]: '#2d333d',
   [WallType.BrickWall]: '#5e2821',
+  [WallType.SnowWall]: '#3b5875',
+  [WallType.CrimsonWall]: '#451218',
+  [WallType.MarbleWall]: '#64748b',
 };
 
 const LIGHT_SHADE_STYLES: string[] = Array.from({ length: 17 }, (_, i) => {
@@ -242,6 +266,7 @@ export function renderGameFrame(
   const {
     world,
     player,
+    npcs,
     enemies,
     projectiles,
     drops,
@@ -292,6 +317,25 @@ export function renderGameFrame(
     ctx.fillRect(0, 0, width, height);
   }
 
+  const playerTileX = Math.floor((player.x + player.width / 2) / TILE_SIZE);
+  const currentBiome = getBiomeAtX(playerTileX, world.width);
+
+  // Biome atmosphere tint over sky
+  if (currentBiome === 'snow') {
+    ctx.fillStyle = `rgba(186, 230, 253, ${(0.18 + dayFactor * 0.14).toFixed(2)})`;
+    ctx.fillRect(0, 0, width, height);
+    // Gentle falling snowflakes in Snow biome
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+    for (let i = 0; i < 28; i++) {
+      const fx = ((i * 173 + elapsed * (22 + (i % 4) * 8)) % (width + 40)) - 20;
+      const fy = ((i * 97 + elapsed * (45 + (i % 5) * 10)) % height);
+      ctx.fillRect(fx, fy, 2.5, 2.5);
+    }
+  } else if (currentBiome === 'crimson') {
+    ctx.fillStyle = `rgba(127, 29, 29, ${(0.28 + (1 - dayFactor) * 0.18).toFixed(2)})`;
+    ctx.fillRect(0, 0, width, height);
+  }
+
   // Night overlay + stars & moon
   if (dayFactor < 0.7) {
     const nightAlpha = (0.7 - dayFactor) / 0.7;
@@ -316,8 +360,19 @@ export function renderGameFrame(
     ctx.fill();
   }
 
-  // Distant parallax rolling hills above ground
-  ctx.fillStyle = dayFactor > 0.4 ? 'rgba(20, 83, 45, 0.35)' : 'rgba(15, 23, 42, 0.55)';
+  // Distant parallax rolling hills above ground (biome-tinted!)
+  ctx.fillStyle =
+    currentBiome === 'snow'
+      ? dayFactor > 0.4
+        ? 'rgba(148, 197, 232, 0.45)'
+        : 'rgba(30, 58, 95, 0.55)'
+      : currentBiome === 'crimson'
+        ? dayFactor > 0.4
+          ? 'rgba(127, 29, 29, 0.48)'
+          : 'rgba(69, 10, 10, 0.65)'
+        : dayFactor > 0.4
+          ? 'rgba(20, 83, 45, 0.35)'
+          : 'rgba(15, 23, 42, 0.55)';
   ctx.beginPath();
   ctx.moveTo(0, height);
   for (let sx = 0; sx <= width + 40; sx += 40) {
@@ -436,15 +491,52 @@ export function renderGameFrame(
     ctx.restore();
   }
 
-  // 5. Render Enemies
+  // 5. Render Human-Like Villager NPCs
+  for (const npc of npcs) {
+    drawHumanNpc(ctx, npc, player, elapsed);
+  }
+
+  // 6. Render Enemies
   for (const enemy of enemies) {
     drawEnemy(ctx, enemy, elapsed, textures);
   }
 
-  // 6. Render Cat Hero (Zazu texture + animated body/paws/tail + held/swinging weapon)
-  drawCatHero(ctx, player, elapsed, textures);
+  // 6.5. Render Grappling Hook Chain (if active)
+  if (player.grapple.active) {
+    const pcx = player.x + player.width / 2;
+    const pcy = player.y + player.height / 2 - 4;
+    ctx.save();
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath();
+    ctx.moveTo(pcx, pcy);
+    ctx.lineTo(player.grapple.x, player.grapple.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
-  // 7. Render Projectiles
+    // Hook claw head
+    const hAngle = Math.atan2(player.grapple.y - pcy, player.grapple.x - pcx);
+    ctx.translate(player.grapple.x, player.grapple.y);
+    ctx.rotate(hAngle);
+    ctx.fillStyle = player.grapple.hooked ? '#fbbf24' : '#e2e8f0';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(8, 0);
+    ctx.lineTo(-4, -7);
+    ctx.lineTo(-1, 0);
+    ctx.lineTo(-4, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 7. Render Cat Hero (Zazu texture + animated body/paws/tail + armor/wings + held weapon)
+  drawCatHero(ctx, player, elapsed, textures, state.equipment);
+
+  // 8. Render Projectiles
   for (const proj of projectiles) {
     ctx.save();
     ctx.translate(proj.x, proj.y);
@@ -458,12 +550,66 @@ export function renderGameFrame(
       ctx.moveTo(-12, 0);
       ctx.lineTo(8, 0);
       ctx.stroke();
-      ctx.fillStyle = '#e2e8f0';
+      ctx.fillStyle = proj.color || '#e2e8f0';
       ctx.beginPath();
       ctx.moveTo(12, 0);
       ctx.lineTo(5, -4);
       ctx.lineTo(5, 4);
       ctx.closePath();
+      ctx.fill();
+    } else if (proj.kind === 'bullet') {
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(-10, -2, 18, 4);
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(-12, -1, 8, 2);
+    } else if (proj.kind === 'terra_beam') {
+      ctx.fillStyle = '#10b981';
+      ctx.strokeStyle = '#bef264';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(14, 0);
+      ctx.quadraticCurveTo(0, -18, -12, -14);
+      ctx.quadraticCurveTo(2, 0, -12, 14);
+      ctx.quadraticCurveTo(0, 18, 14, 0);
+      ctx.fill();
+      ctx.stroke();
+    } else if (proj.kind === 'star_rain') {
+      ctx.rotate(elapsed * 10);
+      ctx.fillStyle = '#fde047';
+      ctx.strokeStyle = '#ec4899';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let s = 0; s < 10; s++) {
+        const rad = s % 2 === 0 ? 12 : 5;
+        const a = (s * Math.PI) / 5;
+        if (s === 0) ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+        else ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (proj.kind === 'water_bolt') {
+      ctx.fillStyle = '#0284c7';
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#bae6fd';
+      ctx.beginPath();
+      ctx.arc(2, -1, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (proj.kind === 'dynamite') {
+      ctx.rotate(elapsed * 11);
+      ctx.fillStyle = '#dc2626';
+      ctx.strokeStyle = '#450a0a';
+      ctx.lineWidth = 1.6;
+      ctx.fillRect(-9, -4, 18, 8);
+      ctx.strokeRect(-9, -4, 18, 8);
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(-5, -4, 3, 8);
+      ctx.fillRect(2, -4, 3, 8);
+      ctx.fillStyle = '#fde047';
+      ctx.beginPath();
+      ctx.arc(11, -4, 3, 0, Math.PI * 2);
       ctx.fill();
     } else if (proj.kind === 'laser') {
       ctx.fillStyle = '#ef4444';
@@ -497,8 +643,26 @@ export function renderGameFrame(
       ctx.moveTo(-4, 4);
       ctx.lineTo(4, -4);
       ctx.stroke();
+    } else if (proj.kind === 'stinger') {
+      ctx.fillStyle = proj.color || '#facc15';
+      ctx.beginPath();
+      ctx.moveTo(10, 0);
+      ctx.lineTo(-7, -4);
+      ctx.lineTo(-4, 0);
+      ctx.lineTo(-7, 4);
+      ctx.closePath();
+      ctx.fill();
+    } else if (proj.kind === 'phantasmal_bolt') {
+      ctx.fillStyle = proj.color || '#2dd4bf';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, proj.radius + 4, proj.radius * 0.68, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(3, 0, proj.radius * 0.42, 0, Math.PI * 2);
+      ctx.fill();
     } else {
-      // Magic orb / fireball / frost bolt / slime glob
+      // Magic orb / fireball / frost bolt / slime glob / cursed_orb
       ctx.fillStyle = proj.color;
       ctx.beginPath();
       ctx.arc(0, 0, proj.radius, 0, Math.PI * 2);
@@ -511,7 +675,7 @@ export function renderGameFrame(
     ctx.restore();
   }
 
-  // 8. Render Pooled Particles
+  // 9. Render Pooled Particles
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
     if (!p.active) continue;
@@ -522,7 +686,7 @@ export function renderGameFrame(
   }
   ctx.globalAlpha = 1;
 
-  // 9. Tile Hover Cursor Highlight
+  // 10. Tile Hover Cursor Highlight
   if (hoverTileX >= 0 && hoverTileX < world.width && hoverTileY >= 0 && hoverTileY < world.height) {
     const hx = hoverTileX * TILE_SIZE;
     const hy = hoverTileY * TILE_SIZE;
@@ -538,7 +702,7 @@ export function renderGameFrame(
     ctx.strokeRect(hx + 1, hy + 1, TILE_SIZE - 2, TILE_SIZE - 2);
   }
 
-  // 10. Floating Damage / Info Texts
+  // 11. Floating Damage / Info Texts
   ctx.font = '700 14px "JetBrains Mono", monospace';
   ctx.textAlign = 'center';
   for (const ft of floatingTexts) {
@@ -552,27 +716,26 @@ export function renderGameFrame(
   }
   ctx.globalAlpha = 1;
 
-  // 11. World Speech Bubble over nearest visible Stool when active
-  if (state.stoolSpeech) {
-    for (let ty = startRow; ty <= endRow; ty++) {
-      for (let tx = startCol; tx <= endCol; tx++) {
-        if (world.tiles[ty * world.width + tx] === TileType.Stool) {
-          const sx = tx * TILE_SIZE + 16;
-          const sy = ty * TILE_SIZE - 14;
-          const label = state.stoolSpeech.text;
-          ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
-          const tw = Math.max(90, ctx.measureText(label).width + 18);
-          ctx.fillStyle = 'rgba(14, 23, 42, 0.94)';
-          ctx.strokeStyle = state.stoolSpeech.stage === 'copied' ? '#34d399' : '#fbbf24';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.roundRect(sx - tw / 2, sy - 26, tw, 24, 7);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = '#fef3c7';
-          ctx.textAlign = 'center';
-          ctx.fillText(label, sx, sy - 10);
-        }
+  // 12. High-Visibility Stool Marker & Active Stool Speech Bubble
+  for (let ty = startRow; ty <= endRow; ty++) {
+    for (let tx = startCol; tx <= endCol; tx++) {
+      if (world.tiles[ty * world.width + tx] === TileType.Stool) {
+        const sx = tx * TILE_SIZE + 16;
+        const bob = Math.sin(elapsed * 3.5) * 3;
+        const sy = ty * TILE_SIZE - 16 + bob;
+        const label = state.stoolSpeech ? state.stoolSpeech.text : 'ТАБУРЕТКА';
+        ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
+        const tw = Math.max(82, ctx.measureText(label).width + 16);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+        ctx.strokeStyle = state.stoolSpeech?.stage === 'copied' ? '#34d399' : '#fbbf24';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(sx - tw / 2, sy - 22, tw, 21, 7);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = state.stoolSpeech ? '#fef3c7' : '#fde047';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, sx, sy - 8);
       }
     }
   }
@@ -679,26 +842,182 @@ function drawTile(
   }
 
   if (tile === TileType.Stool) {
-    // Cozy wooden stool with 4 legs & warm cushion highlight
-    ctx.fillStyle = '#5c3317';
-    ctx.fillRect(x + 8, y + 17, 3, 14);
-    ctx.fillRect(x + 21, y + 17, 3, 14);
-    ctx.fillStyle = '#784421';
-    ctx.fillRect(x + 6, y + 17, 4, 15);
-    ctx.fillRect(x + 22, y + 17, 4, 15);
+    // High-visibility golden-crimson plush Stool with glowing spotlight halo & sparkles!
+    const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4.5 + tx);
+    ctx.fillStyle = `rgba(251, 191, 36, ${(0.18 + pulse * 0.16).toFixed(2)})`;
+    ctx.beginPath();
+    ctx.arc(x + 16, y + 17, 21 + pulse * 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bold bright oak legs
+    ctx.fillStyle = '#92400e';
+    ctx.strokeStyle = '#fef08a';
+    ctx.lineWidth = 1.1;
+    ctx.fillRect(x + 5, y + 14, 5, 18);
+    ctx.strokeRect(x + 5, y + 14, 5, 18);
+    ctx.fillRect(x + 22, y + 14, 5, 18);
+    ctx.strokeRect(x + 22, y + 14, 5, 18);
     // Crossbar
-    ctx.fillRect(x + 9, y + 24, 14, 3);
-    // Seat
+    ctx.fillStyle = '#b45309';
+    ctx.fillRect(x + 9, y + 22, 14, 4);
+
+    // Tall plush crimson & gold velvet seat
+    ctx.fillStyle = '#ef4444';
+    ctx.strokeStyle = '#fef08a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x + 1, y + 6, 30, 10, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // Bright golden trim & sparkle dots
+    ctx.fillStyle = '#fde047';
+    ctx.fillRect(x + 4, y + 8, 24, 3);
+    const spY = y + 2 - ((elapsed * 16) % 10);
+    ctx.fillStyle = '#f9a8d4';
+    ctx.fillRect(x + 6 + Math.sin(elapsed * 5) * 3, spY, 3, 3);
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(x + 24 - Math.cos(elapsed * 4) * 3, spY - 2, 3, 3);
+    return;
+  }
+
+  if (tile === TileType.Table) {
+    ctx.fillStyle = '#92400e';
+    ctx.strokeStyle = '#451a03';
+    ctx.lineWidth = 1.4;
+    ctx.fillRect(x + 1, y + 12, 30, 5);
+    ctx.strokeRect(x + 1, y + 12, 30, 5);
+    ctx.fillStyle = '#b45309';
+    ctx.fillRect(x + 3, y + 13, 26, 2);
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(x + 4, y + 17, 4, 15);
+    ctx.fillRect(x + 24, y + 17, 4, 15);
+    return;
+  }
+
+  if (tile === TileType.Chair) {
+    ctx.fillStyle = '#92400e';
+    ctx.strokeStyle = '#451a03';
+    ctx.lineWidth = 1.3;
+    // Backrest + seat + legs
+    ctx.fillRect(x + 6, y + 4, 4, 28);
+    ctx.strokeRect(x + 6, y + 4, 4, 28);
+    ctx.fillStyle = '#b45309';
+    ctx.fillRect(x + 6, y + 16, 18, 5);
+    ctx.strokeRect(x + 6, y + 16, 18, 5);
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(x + 19, y + 21, 4, 11);
+    return;
+  }
+
+  if (tile === TileType.Chandelier) {
+    const glow = 0.22 + 0.08 * Math.sin(elapsed * 9 + tx);
+    ctx.fillStyle = `rgba(253, 224, 71, ${glow.toFixed(2)})`;
+    ctx.beginPath();
+    ctx.arc(x + 16, y + 18, 26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ca8a04';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x + 16, y);
+    ctx.lineTo(x + 16, y + 12);
+    ctx.moveTo(x + 6, y + 16);
+    ctx.lineTo(x + 26, y + 16);
+    ctx.stroke();
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(x + 13, y + 10, 6, 8);
+    for (const cxOff of [6, 16, 26]) {
+      ctx.fillStyle = '#fef9c3';
+      ctx.fillRect(x + cxOff - 1.5, y + 11, 3, 5);
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath();
+      ctx.arc(x + cxOff, y + 9, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return;
+  }
+
+  if (tile === TileType.Bookshelf) {
+    ctx.fillStyle = '#78350f';
+    ctx.strokeStyle = '#451a03';
+    ctx.lineWidth = 1.4;
+    ctx.fillRect(x + 2, y + 2, 28, 30);
+    ctx.strokeRect(x + 2, y + 2, 28, 30);
+    ctx.fillStyle = '#451a03';
+    ctx.fillRect(x + 4, y + 5, 24, 10);
+    ctx.fillRect(x + 4, y + 18, 24, 11);
+    const bookColors = ['#ef4444', '#38bdf8', '#22c55e', '#facc15', '#a855f7'];
+    for (let b = 0; b < 5; b++) {
+      ctx.fillStyle = bookColors[(b + tx) % bookColors.length];
+      ctx.fillRect(x + 5 + b * 4.5, y + 6, 3.5, 9);
+      ctx.fillStyle = bookColors[(b + ty + 2) % bookColors.length];
+      ctx.fillRect(x + 5 + b * 4.5, y + 19, 3.5, 10);
+    }
+    return;
+  }
+
+  if (tile === TileType.Pot) {
     ctx.fillStyle = '#b45309';
     ctx.strokeStyle = '#451a03';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.roundRect(x + 4, y + 12, 24, 6, 2);
+    ctx.ellipse(x + 16, y + 21, 10, 10, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    // Cushion / wood highlight
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(x + 10, y + 9, 12, 4);
+    ctx.strokeRect(x + 10, y + 9, 12, 4);
     ctx.fillStyle = '#fbbf24';
-    ctx.fillRect(x + 6, y + 13, 20, 2);
+    ctx.fillRect(x + 10, y + 18, 4, 4);
+    return;
+  }
+
+  if (tile === TileType.Rope) {
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(x + 13, y, 6, TILE_SIZE);
+    ctx.fillStyle = '#fde68a';
+    for (let ry = 2; ry < TILE_SIZE; ry += 7) {
+      ctx.fillRect(x + 13, y + ry, 4, 2);
+      ctx.fillRect(x + 15, y + ry + 3, 4, 2);
+    }
+    return;
+  }
+
+  if (tile === TileType.LifeCrystal) {
+    const beat = 1 + Math.sin(elapsed * 5 + tx) * 0.09;
+    ctx.fillStyle = 'rgba(236, 72, 153, 0.28)';
+    ctx.beginPath();
+    ctx.arc(x + 16, y + 16, 16 * beat, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ec4899';
+    ctx.strokeStyle = '#fbcfe8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x + 16, y + 27);
+    ctx.lineTo(x + 6, y + 15);
+    ctx.arc(x + 11, y + 12, 5, Math.PI, 0);
+    ctx.arc(x + 21, y + 12, 5, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    return;
+  }
+
+  if (tile === TileType.PiggyBank) {
+    ctx.fillStyle = '#f472b6';
+    ctx.strokeStyle = '#831843';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.ellipse(x + 16, y + 21, 10, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillRect(x + 9, y + 26, 3, 5);
+    ctx.fillRect(x + 20, y + 26, 3, 5);
+    ctx.fillStyle = '#fbcfe8';
+    ctx.fillRect(x + 23, y + 19, 4, 4);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(x + 14, y + 14, 5, 2);
+    ctx.fillRect(x + 20, y + 17, 2, 2);
     return;
   }
 
@@ -759,16 +1078,70 @@ function drawTile(
         ctx.drawImage(tuft, x + sway, y - 16);
       }
     }
-  } else if (tile === TileType.Planks) {
+  } else if (tile === TileType.CrimsonGrass) {
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(x, y, TILE_SIZE, 8);
+    ctx.fillStyle = '#f87171';
+    ctx.fillRect(x, y, TILE_SIZE, 3);
+    // Crimson spore blades above tile
+    const sway = Math.round(Math.sin(elapsed * 2.1 + tx) * 1.5);
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(x + 6 + sway, y - 6, 3, 6);
+    ctx.fillRect(x + 17 + sway, y - 8, 3, 8);
+    ctx.fillRect(x + 25 + sway, y - 5, 2, 5);
+  } else if (tile === TileType.Snow) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x, y, TILE_SIZE, 5);
+    ctx.fillStyle = '#bae6fd';
+    ctx.fillRect(x + 5, y + 12, 7, 4);
+    ctx.fillRect(x + 18, y + 21, 8, 4);
+  } else if (tile === TileType.Ice) {
+    ctx.fillStyle = '#bae6fd';
+    ctx.fillRect(x + 4, y + 5, 10, 3);
+    ctx.fillRect(x + 16, y + 18, 10, 3);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x + 5, y + 24);
+    ctx.lineTo(x + 22, y + 7);
+    ctx.stroke();
+  } else if (tile === TileType.Planks || tile === TileType.WoodBeam) {
     ctx.fillStyle = pal.edge;
-    ctx.fillRect(x, y + 10, TILE_SIZE, 2);
-    ctx.fillRect(x, y + 21, TILE_SIZE, 2);
-    ctx.fillRect(x + ((tx + ty) % 2 === 0 ? 12 : 22), y, 2, TILE_SIZE);
-  } else if (tile === TileType.Brick || tile === TileType.RoofTile) {
+    if (tile === TileType.WoodBeam) {
+      ctx.fillRect(x + 8, y, 2, TILE_SIZE);
+      ctx.fillRect(x + 22, y, 2, TILE_SIZE);
+    } else {
+      ctx.fillRect(x, y + 10, TILE_SIZE, 2);
+      ctx.fillRect(x, y + 21, TILE_SIZE, 2);
+      ctx.fillRect(x + ((tx + ty) % 2 === 0 ? 12 : 22), y, 2, TILE_SIZE);
+    }
+  } else if (
+    tile === TileType.Brick ||
+    tile === TileType.RoofTile ||
+    tile === TileType.SnowBrick ||
+    tile === TileType.CrimsonBrick ||
+    tile === TileType.SandstoneBrick
+  ) {
     ctx.fillStyle = pal.edge;
     ctx.fillRect(x, y + 15, TILE_SIZE, 2);
     ctx.fillRect(x + (ty % 2 === 0 ? 14 : 6), y, 2, 16);
     ctx.fillRect(x + (ty % 2 === 0 ? 6 : 22), y + 16, 2, 16);
+  } else if (tile === TileType.Marble) {
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y + 10);
+    ctx.quadraticCurveTo(x + 16, y + 16, x + 28, y + 8);
+    ctx.stroke();
+  } else if (tile === TileType.CrystalBlock) {
+    ctx.fillStyle = '#f5d0fe';
+    ctx.beginPath();
+    ctx.moveTo(x + 16, y + 4);
+    ctx.lineTo(x + 26, y + 16);
+    ctx.lineTo(x + 16, y + 28);
+    ctx.lineTo(x + 6, y + 16);
+    ctx.closePath();
+    ctx.fill();
   } else if (tile === TileType.Glass) {
     ctx.strokeStyle = '#e0f2fe';
     ctx.lineWidth = 2;
@@ -790,14 +1163,44 @@ function drawCatHero(
   player: PlayerState,
   elapsed: number,
   textures: LoadedTextures,
+  equipment?: EquipmentState,
 ): void {
   const cx = player.x + player.width / 2;
   const bottomY = player.y + player.height;
   const walkSwing = player.onGround ? Math.sin(player.walkDistance * 0.14) * 5 : 4;
 
+  const helmetDef = equipment?.helmet ? ITEMS[equipment.helmet.itemId] : null;
+  const chestDef = equipment?.chestplate ? ITEMS[equipment.chestplate.itemId] : null;
+  const greavesDef = equipment?.greaves ? ITEMS[equipment.greaves.itemId] : null;
+  const hasWings = Boolean(
+    equipment?.accessories.some((a) => a && ITEMS[a.itemId]?.accessoryKind === 'angel_wings'),
+  );
+  const hasShield = Boolean(
+    equipment?.accessories.some((a) => a && ITEMS[a.itemId]?.accessoryKind === 'cobalt_shield'),
+  );
+
   ctx.save();
   ctx.translate(cx, bottomY);
   ctx.scale(player.facing * player.squashX, player.squashY);
+
+  // Angel Wings behind torso when equipped
+  if (hasWings) {
+    const flap = player.onGround ? Math.sin(elapsed * 2.5) * 0.1 : Math.sin(elapsed * 18) * 0.48;
+    ctx.save();
+    ctx.translate(-8, -22);
+    ctx.rotate(-0.45 + flap);
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(-22, -18, -28, -4);
+    ctx.quadraticCurveTo(-20, 6, -6, 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Animated tail behind body
   const tailWag = Math.sin(elapsed * 6 + player.walkDistance * 0.08) * 0.35;
@@ -813,19 +1216,19 @@ function drawCatHero(
   ctx.stroke();
   ctx.restore();
 
-  // Legs (back + front)
-  ctx.fillStyle = '#5c554b';
+  // Legs (back + front, tinted if Greaves equipped)
+  ctx.fillStyle = greavesDef ? greavesDef.accent : '#5c554b';
   ctx.beginPath();
   ctx.roundRect(-7 - walkSwing * 0.5, -12, 6, 12, 3);
   ctx.fill();
 
-  ctx.fillStyle = '#8b8274';
+  ctx.fillStyle = greavesDef ? greavesDef.color : '#8b8274';
   ctx.beginPath();
   ctx.roundRect(1 + walkSwing * 0.5, -12, 6, 12, 3);
   ctx.fill();
 
-  // Cute cat torso with scarf/collar
-  ctx.fillStyle = player.hitFlashTimer > 0 ? '#ffffff' : '#9c9284';
+  // Cute cat torso (or Chestplate armor)
+  ctx.fillStyle = player.hitFlashTimer > 0 ? '#ffffff' : chestDef ? chestDef.color : '#9c9284';
   ctx.strokeStyle = '#292524';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -833,11 +1236,27 @@ function drawCatHero(
   ctx.fill();
   ctx.stroke();
 
-  // Belly patch & red adventurer collar
-  ctx.fillStyle = '#e7e2d8';
-  ctx.fillRect(-4, -22, 9, 11);
-  ctx.fillStyle = '#e11d48';
-  ctx.fillRect(-9, -26, 18, 4);
+  if (chestDef) {
+    ctx.fillStyle = chestDef.accent;
+    ctx.fillRect(-5, -23, 10, 10);
+  } else {
+    // Belly patch & red adventurer collar
+    ctx.fillStyle = '#e7e2d8';
+    ctx.fillRect(-4, -22, 9, 11);
+    ctx.fillStyle = '#e11d48';
+    ctx.fillRect(-9, -26, 18, 4);
+  }
+
+  // Cobalt Shield badge on front side
+  if (hasShield) {
+    ctx.fillStyle = '#1d4ed8';
+    ctx.strokeStyle = '#93c5fd';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(2, -23, 9, 12, 3);
+    ctx.fill();
+    ctx.stroke();
+  }
 
   // Cat Head using user's Zazu cat texture!
   const headY = -36 + Math.abs(walkSwing) * 0.2;
@@ -883,6 +1302,20 @@ function drawCatHero(
   ctx.beginPath();
   ctx.arc(0, headY, 13, 0, Math.PI * 2);
   ctx.stroke();
+
+  // Equipped Helmet dome & crest over top of cat head
+  if (helmetDef) {
+    ctx.fillStyle = helmetDef.color;
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, headY - 2, 13.5, Math.PI * 0.92, Math.PI * 2.08);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = helmetDef.accent;
+    ctx.fillRect(-3, headY - 16, 6, 4);
+  }
 
   // Held / Swinging Weapon in Paw
   if (player.activeWeaponId) {
@@ -987,12 +1420,290 @@ function drawHeldWeapon(
     ctx.beginPath();
     ctx.arc(0, -24, 3, 0, Math.PI * 2);
     ctx.fill();
+  } else if (item.weaponKind === 'gun') {
+    ctx.fillStyle = item.color;
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.4;
+    ctx.fillRect(0, -5, 22, 8);
+    ctx.strokeRect(0, -5, 22, 8);
+    ctx.fillStyle = item.accent;
+    ctx.fillRect(4, -2, 6, 3);
+  } else if (item.weaponKind === 'hook') {
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(14, -10);
+    ctx.stroke();
+    ctx.fillStyle = item.accent;
+    ctx.beginPath();
+    ctx.arc(14, -10, 4, 0, Math.PI * 2);
+    ctx.fill();
   } else if (item.placesTile !== undefined || item.placesWall !== undefined) {
     ctx.fillStyle = item.color;
     ctx.strokeStyle = '#0f172a';
     ctx.lineWidth = 1.5;
     ctx.fillRect(0, -8, 12, 12);
     ctx.strokeRect(0, -8, 12, 12);
+  }
+
+  ctx.restore();
+}
+
+function drawHumanNpc(
+  ctx: CanvasRenderingContext2D,
+  npc: NpcEntity,
+  player: PlayerState,
+  elapsed: number,
+): void {
+  const cx = npc.x + npc.width / 2;
+  const bottomY = npc.y + npc.height;
+  const ap = npc.appearance;
+  const isSitting = npc.actionState === 'sit';
+  const walkSwing = npc.onGround && !isSitting ? Math.sin(npc.walkDistance * 0.16) * 5.5 : 0;
+  const breath = Math.sin(elapsed * 2.6 + npc.id) * 0.8;
+
+  // Glance toward cat when nearby
+  const lookDx = player.x + player.width / 2 - cx;
+  const eyeShift = Math.max(-1.3, Math.min(1.3, lookDx / 120));
+
+  ctx.save();
+  ctx.translate(cx, bottomY);
+
+  // Subtle shadow on ground
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.32)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 11, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.scale(npc.facing, 1);
+
+  // Back leg
+  ctx.fillStyle = ap.pants;
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1.3;
+  if (isSitting) {
+    ctx.beginPath();
+    ctx.roundRect(-2, -13, 12, 6, 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.roundRect(6, -11, 5, 11, 2);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.roundRect(-6 - walkSwing * 0.6, -15, 5.5, 14, 2);
+    ctx.fill();
+    ctx.stroke();
+    // Shoe
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(-6 - walkSwing * 0.6, -3, 7, 3);
+  }
+
+  // Torso (human shirt + optional apron/tie)
+  const torsoY = (isSitting ? -28 : -31) + breath;
+  ctx.fillStyle = ap.shirt;
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(-7, torsoY, 14, 17, 4);
+  ctx.fill();
+  ctx.stroke();
+
+  if (ap.apron) {
+    ctx.fillStyle = ap.apron;
+    ctx.fillRect(-5, torsoY + 3, 10, 13);
+  }
+
+  // Front leg (walking)
+  if (!isSitting) {
+    ctx.fillStyle = ap.pants;
+    ctx.beginPath();
+    ctx.roundRect(0.5 + walkSwing * 0.6, -15, 5.5, 14, 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(0.5 + walkSwing * 0.6, -3, 7, 3);
+  }
+
+  // Neck
+  ctx.fillStyle = ap.skinShade;
+  ctx.fillRect(-2.5, torsoY - 3, 5, 4);
+
+  // Human Head (expressive face, blinking eyes, eyebrows, hair, blush, hats)
+  const headY = torsoY - 11;
+  ctx.fillStyle = ap.skin;
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(0, headY, 9.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Rosy cheek & nose
+  ctx.fillStyle = ap.blush;
+  ctx.globalAlpha = 0.45;
+  ctx.beginPath();
+  ctx.arc(3.5, headY + 2, 2.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = ap.skinShade;
+  ctx.fillRect(4.5, headY - 0.5, 2, 2.5);
+
+  // Smile
+  ctx.strokeStyle = '#7c2d12';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(2.8, headY + 3, 2.5, 0.15, Math.PI - 0.35);
+  ctx.stroke();
+
+  // Eyes (with realistic blink!)
+  const isBlinking = npc.blinkTimer < 0;
+  if (isBlinking) {
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(0, headY - 1);
+    ctx.lineTo(3.5, headY - 1);
+    ctx.moveTo(5, headY - 1);
+    ctx.lineTo(8, headY - 1);
+    ctx.stroke();
+  } else {
+    // Sclera + Iris
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, headY - 3, 3.6, 3.6);
+    ctx.fillRect(4.8, headY - 3, 3.4, 3.6);
+    ctx.fillStyle = ap.eyeColor;
+    ctx.fillRect(1.1 + eyeShift * 0.6, headY - 2.3, 2, 2.4);
+    ctx.fillRect(5.6 + eyeShift * 0.6, headY - 2.3, 2, 2.4);
+  }
+
+  // Eyebrows
+  ctx.fillStyle = ap.hair;
+  ctx.fillRect(-0.2, headY - 4.8, 3.8, 1.3);
+  ctx.fillRect(4.8, headY - 4.8, 3.4, 1.3);
+
+  // Merchant glasses
+  if (ap.glasses) {
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-0.5, headY - 3.5, 4.4, 4.4);
+    ctx.strokeRect(4.5, headY - 3.5, 4.2, 4.4);
+  }
+
+  // Beard / Mustache if bearded
+  if (ap.hairStyle === 'beard') {
+    ctx.fillStyle = ap.hair;
+    ctx.beginPath();
+    ctx.arc(2, headY + 4, 6.5, 0, Math.PI);
+    ctx.fill();
+  }
+
+  // Hair styles
+  ctx.fillStyle = ap.hair;
+  ctx.beginPath();
+  ctx.arc(-0.5, headY - 2.5, 9.5, Math.PI * 0.9, Math.PI * 2.05);
+  ctx.fill();
+  ctx.fillRect(-9.5, headY - 3, 4.5, 8);
+  if (ap.hairStyle === 'bun') {
+    ctx.beginPath();
+    ctx.arc(-9, headY - 4, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Hats
+  if (ap.hat === 'tophat') {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-10, headY - 10, 20, 3);
+    ctx.fillRect(-7, headY - 19, 14, 9);
+    ctx.fillStyle = '#eab308';
+    ctx.fillRect(-7, headY - 12, 14, 2);
+  } else if (ap.hat === 'nurse') {
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1;
+    ctx.fillRect(-6, headY - 13, 12, 6);
+    ctx.strokeRect(-6, headY - 13, 12, 6);
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(-1, headY - 12, 2, 4);
+    ctx.fillRect(-2, headY - 11, 4, 2);
+  } else if (ap.hat === 'helmet') {
+    ctx.fillStyle = '#ca8a04';
+    ctx.beginPath();
+    ctx.arc(0, headY - 5, 10.5, Math.PI, 0);
+    ctx.fill();
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(6, headY - 9, 4, 4);
+  } else if (ap.hat === 'leaves') {
+    ctx.fillStyle = '#22c55e';
+    ctx.beginPath();
+    ctx.arc(-4, headY - 9, 3.5, 0, Math.PI * 2);
+    ctx.arc(1, headY - 10, 4, 0, Math.PI * 2);
+    ctx.arc(6, headY - 8, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Front Arm (waving, reading book, attacking, or natural walk swing)
+  ctx.save();
+  ctx.translate(1, torsoY + 4);
+  if (npc.actionState === 'wave') {
+    ctx.rotate(-2.2 + Math.sin(elapsed * 12) * 0.45);
+  } else if (npc.actionState === 'read') {
+    ctx.rotate(-0.65);
+  } else if (npc.actionState === 'attack') {
+    ctx.rotate(-0.9);
+  } else {
+    ctx.rotate(-walkSwing * 0.08);
+  }
+  ctx.fillStyle = ap.shirt;
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(-2.5, 0, 5, 12, 2);
+  ctx.fill();
+  ctx.stroke();
+  // Hand
+  ctx.fillStyle = ap.skin;
+  ctx.beginPath();
+  ctx.arc(0, 12.5, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Pocket guide book when reading
+  if (npc.actionState === 'read') {
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(1, 9, 6, 8);
+  }
+  ctx.restore();
+
+  ctx.restore(); // unflip facing
+
+  // Clean Villager Name Tag above head & hats
+  ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
+  ctx.textAlign = 'center';
+  const nameTag = `${npc.title} ${npc.name}`;
+  ctx.strokeStyle = '#090d16';
+  ctx.lineWidth = 3;
+  ctx.strokeText(nameTag, 0, -62 + breath);
+  ctx.fillStyle = npc.homeTileX !== null ? '#a7f3d0' : '#fde68a';
+  ctx.fillText(nameTag, 0, -62 + breath);
+
+  // Lively Overhead Speech Bubble cleanly separated above nameplate
+  if (npc.speechText) {
+    ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
+    const bw = Math.min(220, Math.max(84, ctx.measureText(npc.speechText).width + 18));
+    const bh = 22;
+    const bx = -bw / 2;
+    const by = -98 + breath;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw, bh, 7);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(npc.speechText, 0, by + 15, bw - 10);
   }
 
   ctx.restore();
@@ -1087,203 +1798,8 @@ function drawEnemy(
     ctx.rotate(isWindup ? -0.9 * enemy.facing : 0.3 * enemy.facing);
     ctx.fillRect(-2, -16, 4, 18);
     ctx.restore();
-  } else if (enemy.kind === 'king_slime') {
-    // Giant crowned Cat-Slime Boss!
-    const squish = isWindup ? 0.78 : 1 + Math.sin(enemy.animPhase) * 0.06;
-    ctx.fillStyle = isFlash ? '#ffffff' : isWindup ? '#86efac' : '#16a34a';
-    ctx.strokeStyle = '#052e16';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(
-      cx,
-      enemy.y + enemy.height - (enemy.height * squish) / 2,
-      (enemy.width / 2) / squish,
-      (enemy.height / 2) * squish,
-      0,
-      Math.PI,
-      0,
-    );
-    ctx.lineTo(enemy.x + enemy.width, enemy.y + enemy.height);
-    ctx.lineTo(enemy.x, enemy.y + enemy.height);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Cute slime cat ears + gold crown
-    ctx.fillStyle = '#eab308';
-    ctx.strokeStyle = '#713f12';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx - 18, enemy.y + 6);
-    ctx.lineTo(cx - 20, enemy.y - 12);
-    ctx.lineTo(cx - 8, enemy.y - 3);
-    ctx.lineTo(cx, enemy.y - 14);
-    ctx.lineTo(cx + 8, enemy.y - 3);
-    ctx.lineTo(cx + 20, enemy.y - 12);
-    ctx.lineTo(cx + 18, enemy.y + 6);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    // Ruby jewel in crown
-    ctx.fillStyle = '#ef4444';
-    ctx.beginPath();
-    ctx.arc(cx, enemy.y - 2, 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Eyes & cat whiskers
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(cx - 12 + enemy.facing * 4, cy - 2, 6, 7);
-    ctx.fillRect(cx + 6 + enemy.facing * 4, cy - 2, 6, 7);
-    ctx.fillStyle = '#fef08a';
-    ctx.fillRect(cx - 11 + enemy.facing * 4, cy - 1, 2, 2);
-    ctx.fillRect(cx + 7 + enemy.facing * 4, cy - 1, 2, 2);
-  } else if (enemy.kind === 'kotulhu') {
-    // Kotulhu Boss: uses user's bow-tie cat portrait with eldritch tentacles & crimson aura!
-    const isPhase2 = enemy.hp < enemy.maxHp * 0.5;
-    const rad = enemy.width / 2;
-
-    // Tentacles behind head
-    ctx.strokeStyle = isPhase2 ? '#dc2626' : '#7f1d1d';
-    ctx.lineWidth = 6;
-    ctx.lineCap = 'round';
-    for (let t = -2; t <= 2; t++) {
-      const sway = Math.sin(elapsed * 7 + t * 1.4) * 9;
-      ctx.beginPath();
-      ctx.moveTo(cx + t * 9, cy + rad * 0.4);
-      ctx.quadraticCurveTo(cx + t * 14 + sway, cy + rad + 12, cx + t * 18 - sway, cy + rad + 24);
-      ctx.stroke();
-    }
-
-    // Aura ring
-    ctx.strokeStyle = isWindup || isPhase2 ? '#ef4444' : '#f43f5e';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(cx, cy, rad + 3, 0, Math.PI * 2);
-    ctx.stroke();
-
-    if (textures.kotulhuImg && textures.kotulhuImg.complete && !isFlash) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.drawImage(textures.kotulhuImg, cx - rad, cy - rad, rad * 2, rad * 2);
-      if (isPhase2) {
-        ctx.fillStyle = 'rgba(220, 38, 38, 0.22)';
-        ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
-      }
-      ctx.restore();
-    } else {
-      ctx.fillStyle = isFlash ? '#ffffff' : '#991b1b';
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  } else if (enemy.kind === 'cat_worm') {
-    // Cat Worm Boss: segmented body drawn back-to-front + bamboo-hat cat portrait head!
-    if (enemy.segments) {
-      for (let s = enemy.segments.length - 1; s >= 0; s--) {
-        const seg = enemy.segments[s];
-        const segRad = Math.max(12, 22 - s * 1.1);
-        ctx.fillStyle = isFlash ? '#ffffff' : s % 2 === 0 ? '#78350f' : '#b45309';
-        ctx.strokeStyle = '#fde68a';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(seg.x, seg.y, segRad, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(seg.x, seg.y, segRad * 0.35, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    const rad = enemy.width / 2;
-    ctx.strokeStyle = isWindup ? '#ef4444' : '#f59e0b';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(cx, cy, rad + 2, 0, Math.PI * 2);
-    ctx.stroke();
-
-    if (textures.catWormImg && textures.catWormImg.complete && !isFlash) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.drawImage(textures.catWormImg, cx - rad, cy - rad, rad * 2, rad * 2);
-      ctx.restore();
-    } else {
-      ctx.fillStyle = isFlash ? '#ffffff' : '#d97706';
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  } else if (enemy.kind === 'skele_cat') {
-    // Skele-Cat Boss (Кототрон): skull cat head + 2 orbiting bony claws!
-    const armAngle = elapsed * 3.2;
-    for (const side of [-1, 1]) {
-      const hx = cx + side * 44 + Math.cos(armAngle * side) * 14;
-      const hy = cy + 16 + Math.sin(armAngle * 1.3) * 14;
-      ctx.strokeStyle = '#cbd5e1';
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.moveTo(cx + side * 16, cy + 8);
-      ctx.lineTo(hx, hy);
-      ctx.stroke();
-      ctx.fillStyle = isFlash ? '#ffffff' : '#f1f5f9';
-      ctx.strokeStyle = '#334155';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(hx, hy, 12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
-
-    // Skull cat head + ears
-    ctx.fillStyle = isFlash ? '#ffffff' : '#e2e8f0';
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(cx - 20, cy - 10);
-    ctx.lineTo(cx - 26, cy - 36);
-    ctx.lineTo(cx - 6, cy - 22);
-    ctx.lineTo(cx + 6, cy - 22);
-    ctx.lineTo(cx + 26, cy - 36);
-    ctx.lineTo(cx + 20, cy - 10);
-    ctx.arc(cx, cy, enemy.width / 2 - 4, -0.3, Math.PI + 0.3);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Glowing purple skull eyes & fangs
-    ctx.fillStyle = isWindup ? '#ef4444' : '#9333ea';
-    ctx.beginPath();
-    ctx.arc(cx - 10, cy - 4, 6, 0, Math.PI * 2);
-    ctx.arc(cx + 10, cy - 4, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(cx - 10, cy + 12, 4, 8);
-    ctx.fillRect(cx - 2, cy + 12, 4, 8);
-    ctx.fillRect(cx + 6, cy + 12, 4, 8);
-  } else if (enemy.kind === 'eye_boss') {
-    ctx.fillStyle = isFlash ? '#ffffff' : isWindup ? '#fca5a5' : '#f8fafc';
-    ctx.strokeStyle = '#7f1d1d';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(cx, cy, enemy.width / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Iris + pupil
-    ctx.fillStyle = isWindup ? '#ef4444' : '#dc2626';
-    ctx.beginPath();
-    ctx.arc(cx + enemy.facing * 6, cy, 13, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.arc(cx + enemy.facing * 8, cy, 6, 0, Math.PI * 2);
-    ctx.fill();
+  } else {
+    drawBossEnemy(ctx, enemy, elapsed, textures);
   }
 
   // Telegraph ring during windup

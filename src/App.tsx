@@ -3,19 +3,21 @@ import { ChestModal } from './components/ChestModal';
 import { DebugModal } from './components/DebugModal';
 import { GameHud } from './components/GameHud';
 import { InventoryModal } from './components/InventoryModal';
+import { NpcModal } from './components/NpcModal';
 import { SettingsModal } from './components/SettingsModal';
 import { StatusModal } from './components/StatusModal';
 import { TitleScreen } from './components/TitleScreen';
 import { sound } from './game/audio';
 import { KotarriaEngine } from './game/engine';
 import { loadSettings } from './game/settings';
-import { GameSettings, HudSnapshot } from './game/types';
+import { GameSettings, HudSnapshot, WorldVariant } from './game/types';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<KotarriaEngine | null>(null);
 
   const [hud, setHud] = useState<HudSnapshot | null>(null);
+  const [worldVariant, setWorldVariant] = useState<WorldVariant>('crimson_classic');
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -32,35 +34,49 @@ export default function App() {
   settingsOpenRef.current = settingsOpen;
   const chestOpenRef = useRef(false);
   chestOpenRef.current = Boolean(hud?.activeChest);
+  const npcOpenRef = useRef(false);
+  npcOpenRef.current = Boolean(hud?.activeNpc);
 
   useEffect(() => {
     engineRef.current?.setUiModalOpen(
-      inventoryOpen || debugOpen || settingsOpen || Boolean(hud?.activeChest),
+      inventoryOpen ||
+        debugOpen ||
+        settingsOpen ||
+        Boolean(hud?.activeChest) ||
+        Boolean(hud?.activeNpc),
     );
-  }, [inventoryOpen, debugOpen, settingsOpen, hud?.activeChest]);
+  }, [inventoryOpen, debugOpen, settingsOpen, hud?.activeChest, hud?.activeNpc]);
 
   const handleSettingsChange = useCallback((next: GameSettings) => {
     setSettings(next);
     engineRef.current?.applySettings(next);
   }, []);
 
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback((variant?: WorldVariant) => {
     const engine = engineRef.current;
     if (!engine) return;
     sound.unlock();
+    const chosenVariant = variant ?? worldVariant;
+    if (variant) {
+      setWorldVariant(variant);
+    }
     setInventoryOpen(false);
     setHelpOpen(false);
     setDebugOpen(false);
     setSettingsOpen(false);
-    engine.startNewGame();
+    engine.startNewGame(chosenVariant);
     canvasRef.current?.focus();
-  }, []);
+  }, [worldVariant]);
 
   const handleTogglePause = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
     if (settingsOpenRef.current) {
       setSettingsOpen(false);
+      return;
+    }
+    if (npcOpenRef.current) {
+      engine.closeNpc();
       return;
     }
     if (chestOpenRef.current) {
@@ -106,8 +122,18 @@ export default function App() {
     }
 
     const params = new URLSearchParams(window.location.search);
+    const paramVariant = params.get('variant');
+    const parsedVariant: WorldVariant | undefined =
+      paramVariant === 'crystal_highlands'
+        ? 'crystal_highlands'
+        : paramVariant === 'crimson_classic'
+          ? 'crimson_classic'
+          : undefined;
+    if (parsedVariant) {
+      setWorldVariant(parsedVariant);
+    }
     if (params.get('autostart') === '1') {
-      engine.startNewGame();
+      engine.startNewGame(parsedVariant);
     } else {
       engine.setPhase('title');
     }
@@ -137,7 +163,7 @@ export default function App() {
       }
 
       const activeTag = (e.target as HTMLElement | null)?.tagName;
-      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
         if (e.code === 'Escape') {
           e.preventDefault();
           setDebugOpen(false);
@@ -169,6 +195,7 @@ export default function App() {
           setInventoryOpen(false);
           setSettingsOpen(false);
           engine.closeChest();
+          engine.closeNpc();
           setDebugOpen((v) => !v);
         }
         return;
@@ -185,6 +212,10 @@ export default function App() {
         }
         if (debugOpenRef.current) {
           setDebugOpen(false);
+          return;
+        }
+        if (npcOpenRef.current) {
+          engine.closeNpc();
           return;
         }
         if (chestOpenRef.current) {
@@ -211,6 +242,7 @@ export default function App() {
         e.preventDefault();
         engine.clearInputs();
         engine.closeChest();
+        engine.closeNpc();
         setInventoryOpen((v) => !v);
         return;
       }
@@ -220,7 +252,7 @@ export default function App() {
         return;
       }
 
-      if (inventoryOpenRef.current || chestOpenRef.current) return;
+      if (inventoryOpenRef.current || chestOpenRef.current || npcOpenRef.current) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -258,7 +290,11 @@ export default function App() {
   }, []);
 
   const anyModalBlockingCanvas =
-    inventoryOpen || debugOpen || settingsOpen || Boolean(hud?.activeChest);
+    inventoryOpen ||
+    debugOpen ||
+    settingsOpen ||
+    Boolean(hud?.activeChest) ||
+    Boolean(hud?.activeNpc);
 
   return (
     <main className="relative w-full h-full overflow-hidden bg-[#0b1628]">
@@ -291,6 +327,7 @@ export default function App() {
 
       {hud?.phase === 'title' && (
         <TitleScreen
+          initialVariant={worldVariant}
           onStart={handleStart}
           onOpenSettings={() => {
             sound.unlock();
@@ -311,6 +348,7 @@ export default function App() {
           onToggleInventory={() => {
             engineRef.current?.clearInputs();
             engineRef.current?.closeChest();
+            engineRef.current?.closeNpc();
             setDebugOpen(false);
             setSettingsOpen(false);
             setInventoryOpen((v) => !v);
@@ -322,6 +360,7 @@ export default function App() {
           onToggleDebug={() => {
             engineRef.current?.clearInputs();
             engineRef.current?.closeChest();
+            engineRef.current?.closeNpc();
             setInventoryOpen(false);
             setSettingsOpen(false);
             setDebugOpen((v) => !v);
@@ -329,13 +368,16 @@ export default function App() {
           onOpenSettings={() => {
             engineRef.current?.clearInputs();
             engineRef.current?.closeChest();
+            engineRef.current?.closeNpc();
             setInventoryOpen(false);
             setDebugOpen(false);
             setSettingsOpen(true);
           }}
           onSummonBoss={() => engineRef.current?.summonNightBoss()}
           onOpenChest={() => engineRef.current?.openNearestChest()}
+          onOpenNpc={() => engineRef.current?.openNearestNpc()}
           onPetStool={() => engineRef.current?.petNearestStool()}
+          onToggleDoor={() => engineRef.current?.toggleNearestDoor()}
           onDismissStoolSpeech={() => engineRef.current?.dismissStoolSpeech()}
           onCopyStoolUrl={() => engineRef.current?.copyStoolUrlAgain()}
           onDropSelected={(dropAll) => engineRef.current?.dropSelectedHotbarItem(dropAll)}
@@ -354,6 +396,23 @@ export default function App() {
         />
       )}
 
+      {hud && hud.phase === 'playing' && hud.activeNpc && !hud.activeChest && !inventoryOpen && !debugOpen && !settingsOpen && (
+        <NpcModal
+          npc={hud.activeNpc}
+          coins={hud.coins}
+          hp={hud.hp}
+          maxHp={hud.maxHp}
+          validHouseCount={hud.validHouseCount}
+          roomReport={hud.roomReport}
+          onBuyItem={(itemId) => engineRef.current?.buyNpcItem(itemId)}
+          onHealNurse={() => engineRef.current?.healAtNurse()}
+          onClose={() => {
+            engineRef.current?.closeNpc();
+            canvasRef.current?.focus();
+          }}
+        />
+      )}
+
       {hud && hud.phase === 'playing' && inventoryOpen && (
         <InventoryModal
           hud={hud}
@@ -363,6 +422,10 @@ export default function App() {
           }}
           onSwapSlots={(fa, fi, ta, ti) => engineRef.current?.swapSlots(fa, fi, ta, ti)}
           onDropSlot={(area, idx, amount) => engineRef.current?.dropSlotItem(area, idx, amount)}
+          onEquipItem={(area, idx, targetSlotKey) =>
+            engineRef.current?.equipInventoryItem(area, idx, targetSlotKey)
+          }
+          onUnequipSlot={(slotKey) => engineRef.current?.unequipEquipmentSlot(slotKey)}
           onCraft={(recipeId) => engineRef.current?.tryCraft(recipeId)}
           onSelectHotbar={(idx) => engineRef.current?.selectHotbarSlot(idx)}
         />
@@ -381,10 +444,31 @@ export default function App() {
           onRestoreVitals={() => engineRef.current?.restoreVitals()}
           onSetTime={(preset) => engineRef.current?.setTimePreset(preset)}
           onGiveKit={(kind) => engineRef.current?.giveDebugKit(kind)}
+          onGiveItem={(itemId, count) => engineRef.current?.giveDebugItem(itemId, count)}
+          onGiveChest={(preset, mode) => {
+            engineRef.current?.giveDebugChest(preset, mode);
+            if (mode === 'place_and_open') {
+              setDebugOpen(false);
+            }
+          }}
+          onAddCoins={(delta) => engineRef.current?.addDebugCoins(delta)}
+          onResetCoins={() => engineRef.current?.resetDebugCoins()}
+          onBoostMaxStats={(hpDelta, manaDelta) =>
+            engineRef.current?.boostMaxStats(hpDelta, manaDelta)
+          }
+          onBuildHouseHere={() => engineRef.current?.buildDebugHouseHere()}
+          onInviteAllNpcs={() => engineRef.current?.inviteAllNpcs()}
           onSpawnEnemy={(kind) => engineRef.current?.spawnDebugEnemy(kind)}
           onClearEnemies={() => engineRef.current?.clearAllEnemies()}
           onTeleportSpawn={() => engineRef.current?.teleportToSpawn()}
+          onTeleportCoords={(tx, ty) => engineRef.current?.teleportToCoords(tx, ty)}
           onBoostDefense={(delta) => engineRef.current?.boostDefense(delta)}
+          onRegenerateWorld={(variant) => {
+            setWorldVariant(variant);
+            engineRef.current?.regenerateWorldVariant(variant);
+            setDebugOpen(false);
+            canvasRef.current?.focus();
+          }}
         />
       )}
 
@@ -394,7 +478,7 @@ export default function App() {
           stats={hud.stats}
           onResume={hud.phase === 'paused' ? handleTogglePause : undefined}
           onOpenSettings={hud.phase === 'paused' ? () => setSettingsOpen(true) : undefined}
-          onRestart={handleStart}
+          onRestart={() => handleStart()}
           onTitle={() => {
             setInventoryOpen(false);
             setDebugOpen(false);

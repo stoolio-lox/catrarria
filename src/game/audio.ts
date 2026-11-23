@@ -383,6 +383,33 @@ class SoundEngine {
     this.playTone(520, 780, 0.09, 'triangle', 0.1);
     setTimeout(() => this.playTone(780, 1040, 0.12, 'triangle', 0.1), 75);
   }
+
+  playHook(): void {
+    this.playTone(620, 920, 0.09, 'triangle', 0.09);
+  }
+
+  playCoin(): void {
+    this.playTone(980, 1320, 0.08, 'sine', 0.08);
+    setTimeout(() => this.playTone(1320, 1680, 0.09, 'sine', 0.07), 45);
+  }
+
+  playPotBreak(): void {
+    this.playTone(480, 150, 0.11, 'square', 0.08);
+  }
+
+  playStar(): void {
+    this.playTone(740, 1280, 0.18, 'sine', 0.09);
+  }
+
+  playNpcTalk(): void {
+    this.playTone(340, 420, 0.07, 'sine', 0.07);
+  }
+
+  playMirror(): void {
+    this.playTone(520, 1040, 0.18, 'sine', 0.1);
+    setTimeout(() => this.playTone(780, 1560, 0.2, 'triangle', 0.09), 80);
+  }
 }
 
 export const sound = new SoundEngine();
+
