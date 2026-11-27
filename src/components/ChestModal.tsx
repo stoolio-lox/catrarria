@@ -1,7 +1,8 @@
 import React from 'react';
 import { Archive, PackageCheck, X } from 'lucide-react';
-import { ITEMS } from '../game/catalog';
-import { InventorySlot } from '../game/types';
+import { ITEMS, getItemDescription, getItemName } from '../game/catalog';
+import { UI_TEXT } from '../game/i18n';
+import { InventorySlot, Language } from '../game/types';
 import { ItemIcon } from './ItemIcon';
 
 interface ChestModalProps {
@@ -10,6 +11,7 @@ interface ChestModalProps {
     ty: number;
     items: (InventorySlot | null)[];
   };
+  language: Language;
   onTakeItem: (index: number) => void;
   onTakeAll: () => void;
   onClose: () => void;
@@ -17,10 +19,12 @@ interface ChestModalProps {
 
 export const ChestModal: React.FC<ChestModalProps> = ({
   chest,
+  language,
   onTakeItem,
   onTakeAll,
   onClose,
 }) => {
+  const t = UI_TEXT[language];
   const nonEmptyCount = chest.items.filter(Boolean).length;
 
   return (
@@ -28,7 +32,7 @@ export const ChestModal: React.FC<ChestModalProps> = ({
       className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/65"
       role="dialog"
       aria-modal="true"
-      aria-label="Сундук сокровищ"
+      aria-label={t.chestModalTitle}
     >
       <div className="w-full max-w-md bg-[#0e172a] border border-amber-400/50 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
         {/* Header */}
@@ -36,13 +40,13 @@ export const ChestModal: React.FC<ChestModalProps> = ({
           <div className="flex items-center gap-2.5">
             <Archive className="w-5 h-5 text-amber-400" />
             <h2 className="font-display font-bold text-lg text-amber-300">
-              Сундук сокровищ
+              {t.chestModalTitle}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Закрыть сундук"
+            aria-label={t.closeBtn}
             className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -53,12 +57,14 @@ export const ChestModal: React.FC<ChestModalProps> = ({
         <div className="p-4 overflow-y-auto game-scroll space-y-2">
           {nonEmptyCount === 0 ? (
             <div className="text-center py-8 text-sm text-slate-400">
-              Сундук пуст. Все сокровища уже в твоём рюкзаке!
+              {t.chestModalEmpty}
             </div>
           ) : (
             chest.items.map((slot, idx) => {
               if (!slot) return null;
               const def = ITEMS[slot.itemId];
+              const name = def ? getItemName(def, language) : slot.itemId;
+              const desc = def ? getItemDescription(def, language) : '';
               return (
                 <div
                   key={`${slot.itemId}-${idx}`}
@@ -69,22 +75,22 @@ export const ChestModal: React.FC<ChestModalProps> = ({
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm text-white truncate">
-                      {def?.name ?? slot.itemId}{' '}
+                      {name}{' '}
                       {slot.count > 1 && (
                         <span className="text-amber-300 font-mono-num">×{slot.count}</span>
                       )}
                     </div>
-                    <div className="text-xs text-slate-400 truncate">
-                      {def?.description ?? ''}
+                    <div className="text-xs text-slate-400 leading-snug" title={desc}>
+                      {desc}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => onTakeItem(idx)}
-                    aria-label={`Забрать ${def?.name ?? slot.itemId}`}
+                    aria-label={`${t.takeBtn} ${name}`}
                     className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shrink-0 cursor-pointer"
                   >
-                    Забрать
+                    {t.takeBtn}
                   </button>
                 </div>
               );
@@ -99,7 +105,7 @@ export const ChestModal: React.FC<ChestModalProps> = ({
             onClick={onClose}
             className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
           >
-            Закрыть
+            {t.closeBtn}
           </button>
           {nonEmptyCount > 0 && (
             <button
@@ -108,7 +114,7 @@ export const ChestModal: React.FC<ChestModalProps> = ({
               className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             >
               <PackageCheck className="w-4 h-4" />
-              <span>Забрать всё</span>
+              <span>{t.takeAllBtn}</span>
             </button>
           )}
         </div>

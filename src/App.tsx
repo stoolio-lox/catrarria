@@ -9,8 +9,9 @@ import { StatusModal } from './components/StatusModal';
 import { TitleScreen } from './components/TitleScreen';
 import { sound } from './game/audio';
 import { KotarriaEngine } from './game/engine';
-import { loadSettings } from './game/settings';
-import { GameSettings, HudSnapshot, WorldVariant } from './game/types';
+import { deleteSavedWorld, listSavedWorlds } from './game/saves';
+import { loadSettings, saveSettings } from './game/settings';
+import { GameSettings, HudSnapshot, Language, SaveSlotMeta, WorldVariant } from './game/types';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -18,6 +19,7 @@ export default function App() {
 
   const [hud, setHud] = useState<HudSnapshot | null>(null);
   const [worldVariant, setWorldVariant] = useState<WorldVariant>('crimson_classic');
+  const [savedWorlds, setSavedWorlds] = useState<SaveSlotMeta[]>(() => listSavedWorlds());
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -25,6 +27,12 @@ export default function App() {
   const [debugUnlocked, setDebugUnlocked] = useState(false);
   const [muted, setMuted] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(() => loadSettings());
+
+  useEffect(() => {
+    if (hud?.phase === 'title') {
+      setSavedWorlds(listSavedWorlds());
+    }
+  }, [hud?.phase]);
 
   const inventoryOpenRef = useRef(false);
   inventoryOpenRef.current = inventoryOpen;
@@ -47,10 +55,26 @@ export default function App() {
     );
   }, [inventoryOpen, debugOpen, settingsOpen, hud?.activeChest, hud?.activeNpc]);
 
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+    document.title =
+      settings.language === 'ru'
+        ? 'Котаррия — Приключения Котика'
+        : 'Kotarria — Cat Sandbox Adventure';
+  }, [settings.language]);
+
   const handleSettingsChange = useCallback((next: GameSettings) => {
     setSettings(next);
+    saveSettings(next);
     engineRef.current?.applySettings(next);
   }, []);
+
+  const handleLanguageChange = useCallback(
+    (language: Language) => {
+      handleSettingsChange({ ...settings, language });
+    },
+    [settings, handleSettingsChange],
+  );
 
   const handleStart = useCallback((variant?: WorldVariant) => {
     const engine = engineRef.current;
@@ -328,7 +352,24 @@ export default function App() {
       {hud?.phase === 'title' && (
         <TitleScreen
           initialVariant={worldVariant}
+          language={settings.language}
+          savedWorlds={savedWorlds}
+          onChangeLanguage={handleLanguageChange}
           onStart={handleStart}
+          onLoadSave={(saveId) => {
+            sound.unlock();
+            setInventoryOpen(false);
+            setHelpOpen(false);
+            setDebugOpen(false);
+            setSettingsOpen(false);
+            if (engineRef.current?.loadSavedWorld(saveId)) {
+              canvasRef.current?.focus();
+            }
+          }}
+          onDeleteSave={(saveId) => {
+            deleteSavedWorld(saveId);
+            setSavedWorlds(listSavedWorlds());
+          }}
           onOpenSettings={() => {
             sound.unlock();
             setSettingsOpen(true);
@@ -387,6 +428,7 @@ export default function App() {
       {hud && hud.phase === 'playing' && hud.activeChest && !inventoryOpen && !debugOpen && !settingsOpen && (
         <ChestModal
           chest={hud.activeChest}
+          language={hud.language}
           onTakeItem={(idx) => engineRef.current?.takeChestItem(idx)}
           onTakeAll={() => engineRef.current?.takeAllChestLoot()}
           onClose={() => {
@@ -399,6 +441,7 @@ export default function App() {
       {hud && hud.phase === 'playing' && hud.activeNpc && !hud.activeChest && !inventoryOpen && !debugOpen && !settingsOpen && (
         <NpcModal
           npc={hud.activeNpc}
+          language={hud.language}
           coins={hud.coins}
           hp={hud.hp}
           maxHp={hud.maxHp}
@@ -459,6 +502,8 @@ export default function App() {
           onBuildHouseHere={() => engineRef.current?.buildDebugHouseHere()}
           onInviteAllNpcs={() => engineRef.current?.inviteAllNpcs()}
           onSpawnEnemy={(kind) => engineRef.current?.spawnDebugEnemy(kind)}
+          onSpawnPillars={() => engineRef.current?.spawnCelestialPillars(false)}
+          onStartAlienInvasion={() => engineRef.current?.startAlienInvasion(false)}
           onClearEnemies={() => engineRef.current?.clearAllEnemies()}
           onTeleportSpawn={() => engineRef.current?.teleportToSpawn()}
           onTeleportCoords={(tx, ty) => engineRef.current?.teleportToCoords(tx, ty)}
@@ -475,8 +520,29 @@ export default function App() {
       {hud && (hud.phase === 'paused' || hud.phase === 'gameover') && !settingsOpen && (
         <StatusModal
           mode={hud.phase}
+          language={hud.language}
           stats={hud.stats}
           onResume={hud.phase === 'paused' ? handleTogglePause : undefined}
+          onSaveWorld={
+            hud.phase === 'paused'
+              ? () => {
+                  engineRef.current?.saveCurrentWorld();
+                  setSavedWorlds(listSavedWorlds());
+                }
+              : undefined
+          }
+          onSaveAndMenu={
+            hud.phase === 'paused'
+              ? () => {
+                  engineRef.current?.saveCurrentWorld();
+                  setSavedWorlds(listSavedWorlds());
+                  setInventoryOpen(false);
+                  setDebugOpen(false);
+                  setSettingsOpen(false);
+                  engineRef.current?.setPhase('title');
+                }
+              : undefined
+          }
           onOpenSettings={hud.phase === 'paused' ? () => setSettingsOpen(true) : undefined}
           onRestart={() => handleStart()}
           onTitle={() => {

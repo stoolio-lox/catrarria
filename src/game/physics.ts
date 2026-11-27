@@ -3,6 +3,7 @@ import {
   DebugChestPreset,
   EnemyEntity,
   EnemyKind,
+  Language,
   PlayerState,
   TILE_SIZE,
   TileType,
@@ -78,6 +79,7 @@ export function createInitialPlayer(world: WorldData): PlayerState {
     spawnX: x,
     spawnY: y,
     houseValid: false,
+    effects: [],
     grapple: {
       active: false,
       hooked: false,
@@ -228,6 +230,8 @@ export interface PlayerAccessoryBonuses {
   hasDoubleJump?: boolean;
   hasWings?: boolean;
   manaRegenBonus?: number;
+  gravityMult?: number;
+  invertHorizontal?: boolean;
 }
 
 export function stepPlayerPhysics(
@@ -243,9 +247,11 @@ export function stepPlayerPhysics(
 
   const pcx = player.x + player.width / 2;
   const pcy = player.y + player.height / 2;
-  const moveDir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const rawDir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const moveDir = bonuses?.invertHorizontal ? -rawDir : rawDir;
   const speedMult = bonuses?.speedMult ?? (bonuses?.hasHermesBoots ? 1.38 : 1);
   const jumpMult = bonuses?.jumpMult ?? 1;
+  const gravityMult = bonuses?.gravityMult ?? 1;
   const canDoubleJump = Boolean(bonuses?.hasDoubleJump || bonuses?.hasCloudInBottle);
   const hasWings = Boolean(bonuses?.hasWings);
   const manaRate = (player.houseValid ? 8 : 5) + (bonuses?.manaRegenBonus ?? 0);
@@ -373,7 +379,8 @@ export function stepPlayerPhysics(
       if (!input.jumpHeld && player.vy < -180) {
         player.vy *= 0.65;
       }
-      player.vy = Math.min(MAX_FALL_SPEED, player.vy + GRAVITY * dt);
+      const maxFall = gravityMult < 0.8 ? MAX_FALL_SPEED * 0.45 : MAX_FALL_SPEED;
+      player.vy = Math.min(maxFall, player.vy + GRAVITY * gravityMult * dt);
     }
   }
 
@@ -594,7 +601,8 @@ export function tryDamageTile(
       wall === WallType.BrickWall ||
       wall === WallType.SnowWall ||
       wall === WallType.CrimsonWall ||
-      wall === WallType.MarbleWall
+      wall === WallType.MarbleWall ||
+      wall === WallType.SandstoneWall
     ) {
       setWall(world, tx, ty, WallType.None);
       return { broken: true, droppedItemId: wallTypeToDropItem(wall), hitTile: TileType.Air };
@@ -626,16 +634,36 @@ export function tryDamageTile(
   }
 }
 
+export const PILLAR_KINDS: EnemyKind[] = [
+  'solar_pillar',
+  'vortex_pillar',
+  'nebula_pillar',
+  'stardust_pillar',
+];
+
+const PILLAR_KIND_SET = new Set<EnemyKind>(PILLAR_KINDS);
+
+export function isPillarKind(kind: EnemyKind): boolean {
+  return PILLAR_KIND_SET.has(kind);
+}
+
 export const BOSS_KINDS: EnemyKind[] = [
   'king_slime',
   'eye_boss',
   'kotulhu',
   'cat_worm',
+  'pharaoh_cat',
+  'jester_cat',
+  'sun_cat',
+  'atomic_cat',
+  'party_cat',
+  'melon_bandit',
   'brain_cthulhu',
   'queen_bee',
   'deerclops',
   'skele_cat',
   'wall_of_flesh',
+  'martian_saucer',
   'queen_slime',
   'the_twins',
   'the_destroyer',
@@ -645,6 +673,10 @@ export const BOSS_KINDS: EnemyKind[] = [
   'duke_fishron',
   'empress_light',
   'lunatic_cultist',
+  'solar_pillar',
+  'vortex_pillar',
+  'nebula_pillar',
+  'stardust_pillar',
   'moon_lord',
 ];
 
@@ -654,672 +686,375 @@ export function isBossKind(kind: EnemyKind): boolean {
   return BOSS_KIND_SET.has(kind);
 }
 
+export function getEnemyName(enemy: EnemyEntity, lang: Language = 'en'): string {
+  return lang === 'ru' ? (enemy.nameRu ?? enemy.name) : enemy.name;
+}
+
 export function createEnemy(
   id: number,
   kind: EnemyKind,
   x: number,
   y: number,
   difficultyScale = 1,
+  _lang: Language = 'en',
 ): EnemyEntity {
   const mult = Math.max(1, difficultyScale);
+  const base = (
+    name: string,
+    nameRu: string,
+    width: number,
+    height: number,
+    hp: number,
+    damage: number,
+    defense: number,
+    drops: { itemId: string; min: number; max: number; chance: number }[],
+    extra?: Partial<EnemyEntity>,
+  ): EnemyEntity => ({
+    id,
+    kind,
+    name,
+    nameRu,
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    width,
+    height,
+    hp: Math.round(hp * mult),
+    maxHp: Math.round(hp * mult),
+    damage: Math.round(damage * mult),
+    defense,
+    facing: 1,
+    onGround: false,
+    aiState: 'patrol',
+    stateTimer: 1.0,
+    hitFlashTimer: 0,
+    koTimer: 0,
+    animPhase: Math.random() * Math.PI * 2,
+    drops,
+    ...extra,
+  });
+
   switch (kind) {
+    // === STANDARD & BIOME MOBS ===
     case 'slime':
-      return {
-        id,
-        kind,
-        name: 'Зелёный слизень',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 28,
-        height: 22,
-        hp: Math.round(28 * mult),
-        maxHp: Math.round(28 * mult),
-        damage: Math.round(10 * mult),
-        defense: 1,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 0.7,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: Math.random() * Math.PI * 2,
-        drops: [
-          { itemId: 'slime_gel', min: 1, max: 3, chance: 1 },
-          { itemId: 'crispy_fish', min: 1, max: 1, chance: 0.28 },
-        ],
-      };
+      return base('Green Slime', 'Зелёный слизень', 28, 22, 28, 10, 1, [
+        { itemId: 'slime_gel', min: 1, max: 3, chance: 1 },
+        { itemId: 'crispy_fish', min: 1, max: 1, chance: 0.28 },
+      ], { stateTimer: 0.7 });
+    case 'ice_slime':
+      return base('Ice Slime', 'Ледяной слизень', 30, 22, 36, 13, 2, [
+        { itemId: 'slime_gel', min: 1, max: 3, chance: 1 },
+        { itemId: 'ice_block', min: 2, max: 4, chance: 0.6 },
+      ], { stateTimer: 0.7 });
+    case 'sand_slime':
+      return base('Sand Slime', 'Песчаный слизень', 28, 22, 34, 13, 2, [
+        { itemId: 'slime_gel', min: 1, max: 3, chance: 1 },
+        { itemId: 'sand_block', min: 2, max: 4, chance: 0.65 },
+      ], { stateTimer: 0.7 });
     case 'bat':
-      return {
-        id,
-        kind,
-        name: 'Пещерная мышь',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 28,
-        height: 20,
-        hp: Math.round(24 * mult),
-        maxHp: Math.round(24 * mult),
-        damage: Math.round(12 * mult),
-        defense: 1,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.0,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: Math.random() * Math.PI * 2,
-        drops: [
-          { itemId: 'coal_ore', min: 1, max: 2, chance: 0.6 },
-          { itemId: 'monster_bone', min: 1, max: 1, chance: 0.4 },
-        ],
-      };
+      return base('Cave Bat', 'Пещерная мышь', 28, 20, 24, 12, 1, [
+        { itemId: 'coal_ore', min: 1, max: 2, chance: 0.6 },
+        { itemId: 'monster_bone', min: 1, max: 1, chance: 0.4 },
+      ]);
+    case 'ice_bat':
+      return base('Ice Bat', 'Ледяная мышь', 28, 20, 32, 15, 2, [
+        { itemId: 'ice_block', min: 1, max: 3, chance: 0.7 },
+        { itemId: 'fallen_star', min: 1, max: 1, chance: 0.2 },
+      ]);
+    case 'hellbat':
+      return base('Hellbat', 'Адская мышь', 30, 22, 54, 22, 3, [
+        { itemId: 'obsidian_block', min: 1, max: 3, chance: 0.55 },
+        { itemId: 'coal_ore', min: 2, max: 4, chance: 0.7 },
+      ]);
     case 'goblin':
-      return {
-        id,
-        kind,
-        name: 'Гоблин-разбойник',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 26,
-        height: 40,
-        hp: Math.round(46 * mult),
-        maxHp: Math.round(46 * mult),
-        damage: Math.round(16 * mult),
-        defense: 3,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.1,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: Math.random() * Math.PI * 2,
-        drops: [
-          { itemId: 'iron_ore', min: 1, max: 3, chance: 0.65 },
-          { itemId: 'monster_bone', min: 1, max: 2, chance: 0.75 },
-          { itemId: 'crispy_fish', min: 1, max: 1, chance: 0.35 },
-        ],
-      };
+      return base('Goblin Scout', 'Гоблин-разбойник', 26, 40, 46, 16, 3, [
+        { itemId: 'iron_ore', min: 1, max: 3, chance: 0.65 },
+        { itemId: 'monster_bone', min: 1, max: 2, chance: 0.75 },
+        { itemId: 'crispy_fish', min: 1, max: 1, chance: 0.35 },
+      ]);
     case 'skeleton':
-      return {
-        id,
-        kind,
-        name: 'Костяной страж',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 26,
-        height: 44,
-        hp: Math.round(58 * mult),
-        maxHp: Math.round(58 * mult),
-        damage: Math.round(20 * mult),
-        defense: 4,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.2,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: Math.random() * Math.PI * 2,
-        drops: [
-          { itemId: 'monster_bone', min: 2, max: 4, chance: 1 },
-          { itemId: 'gold_ore', min: 1, max: 2, chance: 0.45 },
-        ],
-      };
+      return base('Bone Skeleton', 'Костяной страж', 26, 44, 58, 20, 4, [
+        { itemId: 'monster_bone', min: 2, max: 4, chance: 1 },
+        { itemId: 'gold_ore', min: 1, max: 2, chance: 0.45 },
+      ]);
+    case 'frost_viking':
+      return base('Undead Viking', 'Снежный викинг', 28, 46, 72, 22, 5, [
+        { itemId: 'monster_bone', min: 2, max: 4, chance: 1 },
+        { itemId: 'ice_block', min: 3, max: 5, chance: 0.8 },
+        { itemId: 'iron_ore', min: 2, max: 3, chance: 0.55 },
+      ]);
+    case 'antlion':
+      return base('Antlion Charger', 'Муравьиный лев', 34, 28, 62, 20, 4, [
+        { itemId: 'sand_block', min: 3, max: 6, chance: 1 },
+        { itemId: 'cactus_block', min: 1, max: 3, chance: 0.5 },
+      ]);
+    case 'mummy':
+      return base('Pyramid Mummy', 'Мумия Пирамиды', 28, 46, 82, 24, 5, [
+        { itemId: 'sandstone_brick', min: 2, max: 5, chance: 0.85 },
+        { itemId: 'monster_bone', min: 2, max: 3, chance: 0.9 },
+        { itemId: 'summon_pharaoh_cat', min: 1, max: 1, chance: 0.2 },
+      ]);
+    case 'crimera':
+      return base('Crimera', 'Кримера', 34, 26, 64, 22, 4, [
+        { itemId: 'crimstone_block', min: 2, max: 4, chance: 0.85 },
+        { itemId: 'monster_bone', min: 1, max: 2, chance: 0.6 },
+      ]);
+    case 'face_monster':
+      return base('Face Monster', 'Кровавый монстр', 32, 46, 78, 25, 5, [
+        { itemId: 'crimstone_block', min: 2, max: 5, chance: 0.9 },
+        { itemId: 'crimson_wood', min: 2, max: 4, chance: 0.6 },
+      ]);
+    case 'blood_crawler':
+      return base('Blood Crawler', 'Кровавый паук', 36, 26, 70, 23, 4, [
+        { itemId: 'crimstone_block', min: 2, max: 4, chance: 0.8 },
+        { itemId: 'healing_potion', min: 1, max: 1, chance: 0.3 },
+      ]);
+    case 'pixie':
+      return base('Crystal Pixie', 'Кристальная пикси', 28, 28, 76, 24, 4, [
+        { itemId: 'crystal_block', min: 2, max: 4, chance: 0.85 },
+        { itemId: 'fallen_star', min: 1, max: 2, chance: 0.35 },
+      ]);
+    case 'sand_shark':
+      return base('Ocean Shark', 'Морская акула', 44, 26, 94, 28, 5, [
+        { itemId: 'crispy_fish', min: 2, max: 4, chance: 1 },
+        { itemId: 'summon_duke_fishron', min: 1, max: 1, chance: 0.14 },
+      ]);
+    case 'fire_imp':
+      return base('Fire Imp', 'Огненный бес', 28, 36, 86, 28, 5, [
+        { itemId: 'obsidian_block', min: 2, max: 4, chance: 0.8 },
+        { itemId: 'ruby_gem', min: 1, max: 2, chance: 0.35 },
+      ]);
+    case 'fire_demon':
+      return base('Underworld Demon', 'Демон преисподней', 38, 48, 128, 34, 7, [
+        { itemId: 'obsidian_block', min: 3, max: 6, chance: 1 },
+        { itemId: 'summon_wall_of_flesh', min: 1, max: 1, chance: 0.25 },
+      ]);
+
+    // === LUNAR PILLAR MOBS ===
+    case 'solar_corite':
+      return base('Solar Corite', 'Солнечный корит', 34, 34, 150, 40, 8, [
+        { itemId: 'solar_fragment', min: 1, max: 2, chance: 0.9 },
+      ]);
+    case 'vortex_alien':
+      return base('Vortex Storm Diver', 'Вихревой штурмовик', 32, 42, 145, 38, 8, [
+        { itemId: 'vortex_fragment', min: 1, max: 2, chance: 0.9 },
+      ]);
+    case 'nebula_floater':
+      return base('Nebula Floater', 'Мозговик Туманности', 34, 38, 145, 39, 7, [
+        { itemId: 'nebula_fragment', min: 1, max: 2, chance: 0.9 },
+      ]);
+    case 'stardust_cell':
+      return base('Stardust Cell', 'Клетка Звёздной Пыли', 34, 34, 140, 36, 7, [
+        { itemId: 'stardust_fragment', min: 1, max: 2, chance: 0.9 },
+      ]);
+
+    // === ALIEN INVASION ===
+    case 'alien_cat':
+      return base('Mars Alien Cat', 'Марсианский Кот', 38, 44, 125, 30, 6, [
+        { itemId: 'fallen_star', min: 1, max: 2, chance: 0.5 },
+        { itemId: 'mana_potion', min: 1, max: 2, chance: 0.4 },
+      ]);
+    case 'alien_drone':
+      return base('Martian Drone', 'Марсианский Дрон', 34, 28, 95, 26, 5, [
+        { itemId: 'iron_bar', min: 1, max: 3, chance: 0.6 },
+        { itemId: 'healing_potion', min: 1, max: 1, chance: 0.35 },
+      ]);
+    case 'martian_saucer':
+      return base('Martian Saucer (Boss)', 'Марсианская Тарелка (Босс)', 106, 62, 1350, 48, 14, [
+        { itemId: 'alien_blaster', min: 1, max: 1, chance: 1 },
+        { itemId: 'crystal_block', min: 10, max: 16, chance: 1 },
+        { itemId: 'life_crystal', min: 1, max: 2, chance: 0.85 },
+      ]);
+
+    // === 4 CELESTIAL PILLARS ===
+    case 'solar_pillar':
+      return base('Solar Pillar', 'Солнечная Башня', 76, 132, 1600, 44, 14, [
+        { itemId: 'solar_fragment', min: 12, max: 18, chance: 1 },
+        { itemId: 'fallen_star', min: 4, max: 6, chance: 1 },
+      ], { shield: 8, maxShield: 8, pillarKind: 'solar', summonTimer: 3.5, stateTimer: 1.6 });
+    case 'vortex_pillar':
+      return base('Vortex Pillar', 'Вихревая Башня', 76, 132, 1600, 44, 14, [
+        { itemId: 'vortex_fragment', min: 12, max: 18, chance: 1 },
+        { itemId: 'fallen_star', min: 4, max: 6, chance: 1 },
+      ], { shield: 8, maxShield: 8, pillarKind: 'vortex', summonTimer: 3.5, stateTimer: 1.6 });
+    case 'nebula_pillar':
+      return base('Nebula Pillar', 'Башня Туманности', 76, 132, 1600, 44, 14, [
+        { itemId: 'nebula_fragment', min: 12, max: 18, chance: 1 },
+        { itemId: 'fallen_star', min: 4, max: 6, chance: 1 },
+      ], { shield: 8, maxShield: 8, pillarKind: 'nebula', summonTimer: 3.5, stateTimer: 1.6 });
+    case 'stardust_pillar':
+      return base('Stardust Pillar', 'Башня Звёздной Пыли', 76, 132, 1600, 44, 14, [
+        { itemId: 'stardust_fragment', min: 12, max: 18, chance: 1 },
+        { itemId: 'fallen_star', min: 4, max: 6, chance: 1 },
+      ], { shield: 8, maxShield: 8, pillarKind: 'stardust', summonTimer: 3.5, stateTimer: 1.6 });
+
+    // === 6 MEME CAT BOSSES ===
+    case 'pharaoh_cat':
+      return base('Naserafal II — Pharaoh Cat', 'Насерафал II — Кот-Фараон', 78, 78, 680, 34, 9, [
+        { itemId: 'pharaoh_staff', min: 1, max: 1, chance: 1 },
+        { itemId: 'sandstone_brick', min: 15, max: 25, chance: 1 },
+        { itemId: 'gold_bar', min: 6, max: 10, chance: 1 },
+        { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
+      ], { summonTimer: 5.5 });
+    case 'jester_cat':
+      return base('Jester Cat (Boss)', 'Кот-Шут (Босс)', 74, 74, 820, 38, 10, [
+        { itemId: 'jester_cards', min: 1, max: 1, chance: 1 },
+        { itemId: 'fallen_star', min: 5, max: 9, chance: 1 },
+        { itemId: 'healing_potion', min: 3, max: 5, chance: 1 },
+      ]);
+    case 'sun_cat':
+      return base('Solar Zazu (Boss)', 'Солнечный Зазу (Босс)', 80, 80, 1180, 46, 13, [
+        { itemId: 'dawnbreaker_sword', min: 1, max: 1, chance: 1 },
+        { itemId: 'solar_fragment', min: 5, max: 9, chance: 1 },
+        { itemId: 'gold_bar', min: 8, max: 12, chance: 1 },
+      ]);
+    case 'atomic_cat':
+      return base('Atomic Nuke Cat (Boss)', 'Атомный Кот (Босс)', 86, 78, 1360, 52, 15, [
+        { itemId: 'atomic_launcher', min: 1, max: 1, chance: 1 },
+        { itemId: 'dynamite', min: 10, max: 16, chance: 1 },
+        { itemId: 'obsidian_block', min: 14, max: 22, chance: 1 },
+      ]);
+    case 'party_cat':
+      return base('Propeller Lollipop Cat (Boss)', 'Кот с Пропеллером (Босс)', 76, 80, 960, 40, 11, [
+        { itemId: 'lollipop_wand', min: 1, max: 1, chance: 1 },
+        { itemId: 'shiny_red_balloon', min: 1, max: 1, chance: 0.65 },
+        { itemId: 'angel_wings', min: 1, max: 1, chance: 0.45 },
+      ]);
+    case 'melon_bandit':
+      return base('Watermelon Outlaw Cat ($1M)', 'Арбузный Кот-Бандит ($1M)', 78, 78, 1080, 44, 12, [
+        { itemId: 'melon_blaster', min: 1, max: 1, chance: 1 },
+        { itemId: 'bounty_badge', min: 1, max: 1, chance: 1 },
+        { itemId: 'life_crystal', min: 1, max: 2, chance: 1 },
+      ]);
+
+    // === CLASSIC & TERRARIA BOSSES ===
     case 'king_slime':
-      return {
-        id,
-        kind,
-        name: 'Король Слизней-Котов',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 68,
-        height: 54,
-        hp: Math.round(240 * mult),
-        maxHp: Math.round(240 * mult),
-        damage: Math.round(20 * mult),
-        defense: 4,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.1,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        summonTimer: 4.5,
-        drops: [
-          { itemId: 'slime_gel', min: 10, max: 16, chance: 1 },
-          { itemId: 'gold_bar', min: 3, max: 5, chance: 1 },
-          { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
-        ],
-      };
+      return base('King Slime Cat', 'Король Слизней-Котов', 68, 54, 240, 20, 4, [
+        { itemId: 'slime_gel', min: 10, max: 16, chance: 1 },
+        { itemId: 'gold_bar', min: 3, max: 5, chance: 1 },
+        { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
+      ], { summonTimer: 4.5, stateTimer: 1.1 });
     case 'kotulhu':
-      return {
-        id,
-        kind,
-        name: 'Котулху (Босс)',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 66,
-        height: 66,
-        hp: Math.round(320 * mult),
-        maxHp: Math.round(320 * mult),
-        damage: Math.round(26 * mult),
-        defense: 5,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.3,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
-          { itemId: 'iron_bar', min: 5, max: 8, chance: 1 },
-          { itemId: 'warm_milk', min: 2, max: 3, chance: 1 },
-        ],
-      };
+      return base('Kotulhu (Boss)', 'Котулху (Босс)', 66, 66, 320, 26, 5, [
+        { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
+        { itemId: 'iron_bar', min: 5, max: 8, chance: 1 },
+        { itemId: 'warm_milk', min: 2, max: 3, chance: 1 },
+      ], { stateTimer: 1.3 });
     case 'cat_worm': {
       const segs: { x: number; y: number }[] = [];
       for (let i = 1; i <= 9; i++) {
         segs.push({ x: x + i * 24, y });
       }
-      return {
-        id,
-        kind,
-        name: 'Котовый Червь (Босс)',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 54,
-        height: 54,
-        hp: Math.round(380 * mult),
-        maxHp: Math.round(380 * mult),
-        damage: Math.round(24 * mult),
-        defense: 6,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.8,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        segments: segs,
-        drops: [
-          { itemId: 'iron_bar', min: 6, max: 10, chance: 1 },
-          { itemId: 'gold_bar', min: 4, max: 6, chance: 1 },
-          { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
-        ],
-      };
+      return base('Cat Worm (Boss)', 'Котовый Червь (Босс)', 54, 54, 380, 24, 6, [
+        { itemId: 'iron_bar', min: 6, max: 10, chance: 1 },
+        { itemId: 'gold_bar', min: 4, max: 6, chance: 1 },
+        { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
+      ], { segments: segs, stateTimer: 1.8 });
     }
     case 'skele_cat':
-      return {
-        id,
-        kind,
-        name: 'Кототрон (Босс)',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 64,
-        height: 64,
-        hp: Math.round(440 * mult),
-        maxHp: Math.round(440 * mult),
-        damage: Math.round(30 * mult),
-        defense: 8,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.5,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'monster_bone', min: 10, max: 16, chance: 1 },
-          { itemId: 'ruby_gem', min: 4, max: 7, chance: 1 },
-          { itemId: 'gold_bar', min: 5, max: 8, chance: 1 },
-        ],
-      };
+      return base('Skeletron Cat (Boss)', 'Кототрон (Босс)', 64, 64, 440, 30, 8, [
+        { itemId: 'monster_bone', min: 10, max: 16, chance: 1 },
+        { itemId: 'ruby_gem', min: 4, max: 7, chance: 1 },
+        { itemId: 'gold_bar', min: 5, max: 8, chance: 1 },
+      ], { stateTimer: 1.5 });
     case 'eye_boss':
-      return {
-        id,
-        kind,
-        name: 'Око Ночи (Босс)',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 56,
-        height: 56,
-        hp: Math.round(280 * mult),
-        maxHp: Math.round(280 * mult),
-        damage: Math.round(24 * mult),
-        defense: 5,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.4,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
-          { itemId: 'gold_bar', min: 3, max: 5, chance: 1 },
-          { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
-        ],
-      };
+      return base('Eye of Cthulhu (Boss)', 'Глаз Ктулху (Босс)', 56, 56, 280, 24, 5, [
+        { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
+        { itemId: 'gold_bar', min: 3, max: 5, chance: 1 },
+        { itemId: 'catnip_elixir', min: 1, max: 1, chance: 1 },
+      ], { stateTimer: 1.4 });
     case 'brain_cthulhu':
-      return {
-        id,
-        kind,
-        name: 'Мозг Ктулху',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 74,
-        height: 68,
-        hp: Math.round(360 * mult),
-        maxHp: Math.round(360 * mult),
-        damage: Math.round(26 * mult),
-        defense: 6,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.4,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        summonTimer: 4.0,
-        drops: [
-          { itemId: 'crimstone_block', min: 10, max: 18, chance: 1 },
-          { itemId: 'crimson_helmet', min: 1, max: 1, chance: 0.45 },
-          { itemId: 'ruby_gem', min: 2, max: 4, chance: 1 },
-        ],
-      };
+      return base('Brain of Cthulhu', 'Мозг Ктулху', 74, 68, 360, 26, 6, [
+        { itemId: 'crimstone_block', min: 10, max: 18, chance: 1 },
+        { itemId: 'crimson_helmet', min: 1, max: 1, chance: 0.45 },
+        { itemId: 'ruby_gem', min: 2, max: 4, chance: 1 },
+      ], { summonTimer: 4.0, stateTimer: 1.4 });
     case 'queen_bee':
-      return {
-        id,
-        kind,
-        name: 'Королева Пчёл',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 68,
-        height: 58,
-        hp: Math.round(410 * mult),
-        maxHp: Math.round(410 * mult),
-        damage: Math.round(28 * mult),
-        defense: 7,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.2,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'gold_bar', min: 5, max: 9, chance: 1 },
-          { itemId: 'healing_potion', min: 3, max: 5, chance: 1 },
-          { itemId: 'shiny_red_balloon', min: 1, max: 1, chance: 0.35 },
-        ],
-      };
+      return base('Queen Bee', 'Королева Пчёл', 68, 58, 410, 28, 7, [
+        { itemId: 'gold_bar', min: 5, max: 9, chance: 1 },
+        { itemId: 'healing_potion', min: 3, max: 5, chance: 1 },
+        { itemId: 'shiny_red_balloon', min: 1, max: 1, chance: 0.35 },
+      ], { stateTimer: 1.2 });
     case 'deerclops':
-      return {
-        id,
-        kind,
-        name: 'Циклоп-Олень',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 72,
-        height: 86,
-        hp: Math.round(500 * mult),
-        maxHp: Math.round(500 * mult),
-        damage: Math.round(32 * mult),
-        defense: 8,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.2,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'ice_block', min: 12, max: 20, chance: 1 },
-          { itemId: 'fallen_star', min: 4, max: 7, chance: 1 },
-          { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
-        ],
-      };
+      return base('Deerclops', 'Циклоп-Олень', 72, 86, 500, 32, 8, [
+        { itemId: 'ice_block', min: 12, max: 20, chance: 1 },
+        { itemId: 'fallen_star', min: 4, max: 7, chance: 1 },
+        { itemId: 'ruby_gem', min: 3, max: 5, chance: 1 },
+      ], { stateTimer: 1.2 });
     case 'wall_of_flesh':
-      return {
-        id,
-        kind,
-        name: 'Стена Плоти',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 84,
-        height: 168,
-        hp: Math.round(640 * mult),
-        maxHp: Math.round(640 * mult),
-        damage: Math.round(36 * mult),
-        defense: 10,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.4,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'obsidian_block', min: 12, max: 18, chance: 1 },
-          { itemId: 'cobalt_shield', min: 1, max: 1, chance: 0.5 },
-          { itemId: 'crystal_block', min: 8, max: 14, chance: 1 },
-        ],
-      };
+      return base('Wall of Flesh', 'Стена Плоти', 84, 168, 640, 36, 10, [
+        { itemId: 'obsidian_block', min: 12, max: 18, chance: 1 },
+        { itemId: 'cobalt_shield', min: 1, max: 1, chance: 0.5 },
+        { itemId: 'crystal_block', min: 8, max: 14, chance: 1 },
+      ], { stateTimer: 1.4 });
     case 'queen_slime':
-      return {
-        id,
-        kind,
-        name: 'Королева Слизней',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 76,
-        height: 62,
-        hp: Math.round(740 * mult),
-        maxHp: Math.round(740 * mult),
-        damage: Math.round(38 * mult),
-        defense: 11,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.1,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        summonTimer: 5.5,
-        drops: [
-          { itemId: 'crystal_block', min: 10, max: 16, chance: 1 },
-          { itemId: 'angel_wings', min: 1, max: 1, chance: 0.35 },
-          { itemId: 'crystal_chestplate', min: 1, max: 1, chance: 0.4 },
-        ],
-      };
+      return base('Queen Slime', 'Королева Слизней', 76, 62, 740, 38, 11, [
+        { itemId: 'crystal_block', min: 10, max: 16, chance: 1 },
+        { itemId: 'angel_wings', min: 1, max: 1, chance: 0.35 },
+        { itemId: 'crystal_chestplate', min: 1, max: 1, chance: 0.4 },
+      ], { summonTimer: 5.5, stateTimer: 1.1 });
     case 'the_twins':
-      return {
-        id,
-        kind,
-        name: 'Близнецы (Ретиназер и Спазматизм)',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 78,
-        height: 70,
-        hp: Math.round(860 * mult),
-        maxHp: Math.round(860 * mult),
-        damage: Math.round(42 * mult),
-        defense: 12,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.15,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'crystal_block', min: 10, max: 18, chance: 1 },
-          { itemId: 'gold_bar', min: 8, max: 12, chance: 1 },
-          { itemId: 'mana_flower', min: 1, max: 1, chance: 0.45 },
-        ],
-      };
+      return base('The Twins (Retinazer & Spazmatism)', 'Близнецы (Ретиназер и Спазматизм)', 78, 70, 860, 42, 12, [
+        { itemId: 'crystal_block', min: 10, max: 18, chance: 1 },
+        { itemId: 'gold_bar', min: 8, max: 12, chance: 1 },
+        { itemId: 'mana_flower', min: 1, max: 1, chance: 0.45 },
+      ], { stateTimer: 1.15 });
     case 'the_destroyer': {
       const segs: { x: number; y: number }[] = [];
       for (let i = 1; i <= 14; i++) {
         segs.push({ x: x + i * 24, y });
       }
-      return {
-        id,
-        kind,
-        name: 'Уничтожитель',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 60,
-        height: 60,
-        hp: Math.round(980 * mult),
-        maxHp: Math.round(980 * mult),
-        damage: Math.round(44 * mult),
-        defense: 14,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.5,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        segments: segs,
-        drops: [
-          { itemId: 'iron_bar', min: 12, max: 18, chance: 1 },
-          { itemId: 'crystal_block', min: 10, max: 16, chance: 1 },
-          { itemId: 'obsidian_block', min: 10, max: 16, chance: 1 },
-        ],
-      };
+      return base('The Destroyer', 'Уничтожитель', 60, 60, 980, 44, 14, [
+        { itemId: 'iron_bar', min: 12, max: 18, chance: 1 },
+        { itemId: 'crystal_block', min: 10, max: 16, chance: 1 },
+        { itemId: 'obsidian_block', min: 10, max: 16, chance: 1 },
+      ], { segments: segs, stateTimer: 1.5 });
     }
     case 'skeletron_prime':
-      return {
-        id,
-        kind,
-        name: 'Скелетрон Прайм',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 76,
-        height: 76,
-        hp: Math.round(1040 * mult),
-        maxHp: Math.round(1040 * mult),
-        damage: Math.round(46 * mult),
-        defense: 14,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.25,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'monster_bone', min: 12, max: 20, chance: 1 },
-          { itemId: 'crystal_block', min: 12, max: 18, chance: 1 },
-          { itemId: 'cobalt_shield', min: 1, max: 1, chance: 0.45 },
-        ],
-      };
+      return base('Skeletron Prime', 'Скелетрон Прайм', 76, 76, 1040, 46, 14, [
+        { itemId: 'monster_bone', min: 12, max: 20, chance: 1 },
+        { itemId: 'crystal_block', min: 12, max: 18, chance: 1 },
+        { itemId: 'cobalt_shield', min: 1, max: 1, chance: 0.45 },
+      ], { stateTimer: 1.25 });
     case 'plantera':
-      return {
-        id,
-        kind,
-        name: 'Плантера',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 78,
-        height: 78,
-        hp: Math.round(1200 * mult),
-        maxHp: Math.round(1200 * mult),
-        damage: Math.round(48 * mult),
-        defense: 15,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.2,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'life_crystal', min: 2, max: 3, chance: 1 },
-          { itemId: 'ruby_gem', min: 6, max: 10, chance: 1 },
-          { itemId: 'crystal_helmet', min: 1, max: 1, chance: 0.45 },
-        ],
-      };
+      return base('Plantera', 'Плантера', 78, 78, 1200, 48, 15, [
+        { itemId: 'life_crystal', min: 2, max: 3, chance: 1 },
+        { itemId: 'ruby_gem', min: 6, max: 10, chance: 1 },
+        { itemId: 'crystal_helmet', min: 1, max: 1, chance: 0.45 },
+      ], { stateTimer: 1.2 });
     case 'golem':
-      return {
-        id,
-        kind,
-        name: 'Голем Храма',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 82,
-        height: 84,
-        hp: Math.round(1350 * mult),
-        maxHp: Math.round(1350 * mult),
-        damage: Math.round(52 * mult),
-        defense: 18,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.1,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'gold_bar', min: 10, max: 16, chance: 1 },
-          { itemId: 'obsidian_block', min: 14, max: 20, chance: 1 },
-          { itemId: 'celestial_emblem', min: 1, max: 1, chance: 0.5 },
-        ],
-      };
+      return base('Temple Golem', 'Голем Храма', 82, 84, 1350, 52, 18, [
+        { itemId: 'gold_bar', min: 10, max: 16, chance: 1 },
+        { itemId: 'obsidian_block', min: 14, max: 20, chance: 1 },
+        { itemId: 'celestial_emblem', min: 1, max: 1, chance: 0.5 },
+      ], { stateTimer: 1.1 });
     case 'duke_fishron':
-      return {
-        id,
-        kind,
-        name: 'Герцог Рыброн',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 84,
-        height: 66,
-        hp: Math.round(1520 * mult),
-        maxHp: Math.round(1520 * mult),
-        damage: Math.round(56 * mult),
-        defense: 16,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 0.95,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'crispy_fish', min: 8, max: 14, chance: 1 },
-          { itemId: 'angel_wings', min: 1, max: 1, chance: 0.6 },
-          { itemId: 'crystal_block', min: 14, max: 22, chance: 1 },
-        ],
-      };
+      return base('Duke Fishron', 'Герцог Рыброн', 84, 66, 1520, 56, 16, [
+        { itemId: 'crispy_fish', min: 8, max: 14, chance: 1 },
+        { itemId: 'angel_wings', min: 1, max: 1, chance: 0.6 },
+        { itemId: 'crystal_block', min: 14, max: 22, chance: 1 },
+      ], { stateTimer: 0.95 });
     case 'empress_light':
-      return {
-        id,
-        kind,
-        name: 'Императрица Света',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 78,
-        height: 82,
-        hp: Math.round(1700 * mult),
-        maxHp: Math.round(1700 * mult),
-        damage: Math.round(60 * mult),
-        defense: 16,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.0,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'fallen_star', min: 10, max: 16, chance: 1 },
-          { itemId: 'celestial_emblem', min: 1, max: 1, chance: 0.6 },
-          { itemId: 'crystal_greaves', min: 1, max: 1, chance: 0.5 },
-        ],
-      };
+      return base('Empress of Light', 'Императрица Света', 78, 82, 1700, 60, 16, [
+        { itemId: 'fallen_star', min: 10, max: 16, chance: 1 },
+        { itemId: 'celestial_emblem', min: 1, max: 1, chance: 0.6 },
+        { itemId: 'crystal_greaves', min: 1, max: 1, chance: 0.5 },
+      ], { stateTimer: 1.0 });
     case 'lunatic_cultist':
-      return {
-        id,
-        kind,
-        name: 'Культист-Лунатик',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 56,
-        height: 70,
-        hp: Math.round(1860 * mult),
-        maxHp: Math.round(1860 * mult),
-        damage: Math.round(62 * mult),
-        defense: 18,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.05,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'fallen_star', min: 12, max: 20, chance: 1 },
-          { itemId: 'crystal_block', min: 16, max: 24, chance: 1 },
-          { itemId: 'mana_potion', min: 5, max: 8, chance: 1 },
-        ],
-      };
+      return base('Lunatic Cultist', 'Культист-Лунатик', 56, 70, 1860, 62, 18, [
+        { itemId: 'fallen_star', min: 12, max: 20, chance: 1 },
+        { itemId: 'crystal_block', min: 16, max: 24, chance: 1 },
+        { itemId: 'mana_potion', min: 5, max: 8, chance: 1 },
+      ], { stateTimer: 1.05 });
     case 'moon_lord':
-      return {
-        id,
-        kind,
-        name: 'Лунный Лорд (Финальный босс)',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        width: 112,
-        height: 116,
-        hp: Math.round(2500 * mult),
-        maxHp: Math.round(2500 * mult),
-        damage: Math.round(68 * mult),
-        defense: 22,
-        facing: 1,
-        onGround: false,
-        aiState: 'patrol',
-        stateTimer: 1.15,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        animPhase: 0,
-        drops: [
-          { itemId: 'terra_blade', min: 1, max: 1, chance: 1 },
-          { itemId: 'angel_wings', min: 1, max: 1, chance: 0.8 },
-          { itemId: 'life_crystal', min: 3, max: 5, chance: 1 },
-          { itemId: 'fallen_star', min: 15, max: 25, chance: 1 },
-        ],
-      };
+      return base('Moon Lord (Final Boss)', 'Лунный Лорд (Финальный босс)', 112, 116, 2500, 68, 22, [
+        { itemId: 'meowmere_blade', min: 1, max: 1, chance: 1 },
+        { itemId: 'terra_blade', min: 1, max: 1, chance: 1 },
+        { itemId: 'angel_wings', min: 1, max: 1, chance: 0.85 },
+        { itemId: 'life_crystal', min: 3, max: 5, chance: 1 },
+        { itemId: 'fallen_star', min: 15, max: 25, chance: 1 },
+      ], { stateTimer: 1.15 });
   }
 }
 
@@ -1361,8 +1096,55 @@ export function stepEnemyAI(
   const dir: 1 | -1 = dx >= 0 ? 1 : -1;
   enemy.stateTimer -= dt;
 
-  // Policy 1: Slime
-  if (enemy.kind === 'slime') {
+  // Policy 0: Celestial Pillars (stationary hovering monoliths with shield + minion summoning)
+  if (isPillarKind(enemy.kind)) {
+    enemy.vx = 0;
+    enemy.vy = Math.sin(enemy.animPhase * 0.35) * 14;
+    enemy.y += enemy.vy * dt;
+    enemy.facing = dir;
+
+    let spawnMinionKind: EnemyKind | undefined;
+    if (dist < 1100) {
+      enemy.summonTimer = (enemy.summonTimer ?? 3.5) - dt;
+      if (enemy.summonTimer <= 0) {
+        enemy.summonTimer = 4.6;
+        spawnMinionKind =
+          enemy.kind === 'solar_pillar'
+            ? 'solar_corite'
+            : enemy.kind === 'vortex_pillar'
+              ? 'vortex_alien'
+              : enemy.kind === 'nebula_pillar'
+                ? 'nebula_floater'
+                : 'stardust_cell';
+      }
+    }
+
+    const spawnProjectiles: EnemyProjectileSpawn[] = [];
+    if (enemy.stateTimer <= 0) {
+      enemy.stateTimer = 1.9;
+      if (dist < 560) {
+        const boltColor =
+          enemy.kind === 'solar_pillar'
+            ? '#f97316'
+            : enemy.kind === 'vortex_pillar'
+              ? '#14b8a6'
+              : enemy.kind === 'nebula_pillar'
+                ? '#e879f9'
+                : '#38bdf8';
+        spawnProjectiles.push(
+          { kind: 'phantasmal_bolt', vx: (dx / len) * 350, vy: (dy / len) * 350, color: boltColor, radius: 9 },
+          { kind: 'cursed_orb', vx: (dx / len) * 290 + 45, vy: (dy / len) * 290 - 50, color: boltColor, radius: 8 },
+        );
+      }
+    }
+    return {
+      spawnMinionKind,
+      spawnProjectiles: spawnProjectiles.length > 0 ? spawnProjectiles : undefined,
+    };
+  }
+
+  // Policy 1: Slime (Green Slime, Ice Slime, Sand Slime)
+  if (enemy.kind === 'slime' || enemy.kind === 'ice_slime' || enemy.kind === 'sand_slime') {
     if (enemy.onGround) {
       enemy.vx *= Math.max(0, 1 - dt * 10);
       if (enemy.aiState === 'patrol' && enemy.stateTimer <= 0) {
@@ -1391,26 +1173,66 @@ export function stepEnemyAI(
     return {};
   }
 
-  // Policy 2: Bat
-  if (enemy.kind === 'bat') {
+  // Policy 2: Aerial Swarm & Pillar Mobs
+  if (
+    enemy.kind === 'bat' ||
+    enemy.kind === 'ice_bat' ||
+    enemy.kind === 'crimera' ||
+    enemy.kind === 'pixie' ||
+    enemy.kind === 'hellbat' ||
+    enemy.kind === 'fire_imp' ||
+    enemy.kind === 'fire_demon' ||
+    enemy.kind === 'solar_corite' ||
+    enemy.kind === 'vortex_alien' ||
+    enemy.kind === 'nebula_floater' ||
+    enemy.kind === 'stardust_cell' ||
+    enemy.kind === 'alien_drone'
+  ) {
     enemy.facing = dir;
+    const isCaster =
+      enemy.kind === 'fire_imp' ||
+      enemy.kind === 'fire_demon' ||
+      enemy.kind === 'vortex_alien' ||
+      enemy.kind === 'nebula_floater' ||
+      enemy.kind === 'alien_drone';
+    const spawnProjectiles: EnemyProjectileSpawn[] = [];
+
     if (enemy.aiState === 'patrol') {
-      const hoverX = Math.cos(enemy.animPhase * 0.5) * 90 + (dist > 140 ? dir * 85 : -dir * 45);
-      const hoverY = Math.sin(enemy.animPhase) * 40 + (dy < -20 ? -50 : dy > 60 ? 50 : 0);
+      const targetSpeed = enemy.kind.endsWith('bat') ? 90 : 125;
+      const hoverX = Math.cos(enemy.animPhase * 0.5) * 90 + (dist > 140 ? dir * targetSpeed : -dir * 45);
+      const hoverY = Math.sin(enemy.animPhase) * 40 + (dy < -20 ? -55 : dy > 60 ? 55 : 0);
       enemy.vx += (hoverX - enemy.vx) * Math.min(1, dt * 4);
       enemy.vy += (hoverY - enemy.vy) * Math.min(1, dt * 4);
-      if (dist < 320 && enemy.stateTimer <= 0 && allowAttackToken) {
+      if (dist < 380 && enemy.stateTimer <= 0 && allowAttackToken) {
         enemy.aiState = 'windup';
         enemy.stateTimer = 0.4;
       }
     } else if (enemy.aiState === 'windup') {
       enemy.vx *= 0.9;
-      enemy.vy = -40;
+      enemy.vy = -35;
       if (enemy.stateTimer <= 0) {
         enemy.aiState = 'attack';
-        enemy.vx = (dx / len) * 320;
-        enemy.vy = (dy / len) * 320;
+        const dash = enemy.kind === 'solar_corite' ? 410 : 330;
+        enemy.vx = (dx / len) * dash;
+        enemy.vy = (dy / len) * dash;
         enemy.stateTimer = 0.55;
+        if (isCaster) {
+          const projColor =
+            enemy.kind === 'alien_drone'
+              ? '#22c55e'
+              : enemy.kind === 'nebula_floater'
+                ? '#e879f9'
+                : enemy.kind === 'vortex_alien'
+                  ? '#14b8a6'
+                  : '#f97316';
+          spawnProjectiles.push({
+            kind: enemy.kind === 'alien_drone' || enemy.kind === 'vortex_alien' ? 'laser' : 'cursed_orb',
+            vx: (dx / len) * 370,
+            vy: (dy / len) * 370,
+            color: projColor,
+            radius: 7,
+          });
+        }
       }
     } else if (enemy.aiState === 'attack') {
       if (enemy.stateTimer <= 0) {
@@ -1426,27 +1248,65 @@ export function stepEnemyAI(
       }
     }
     moveEntityWithTiles(enemy, world, dt, true);
-    return {};
+    return {
+      spawnProjectiles: spawnProjectiles.length > 0 ? spawnProjectiles : undefined,
+    };
   }
 
-  // Policy 3: Goblin / Skeleton
-  if (enemy.kind === 'goblin' || enemy.kind === 'skeleton') {
-    const speed = enemy.kind === 'goblin' ? 145 : 118;
+  // Policy 3: Ground Walkers, Desert / Crimson / Snow / Ocean Mobs & Alien Cat
+  if (
+    enemy.kind === 'goblin' ||
+    enemy.kind === 'skeleton' ||
+    enemy.kind === 'frost_viking' ||
+    enemy.kind === 'antlion' ||
+    enemy.kind === 'mummy' ||
+    enemy.kind === 'face_monster' ||
+    enemy.kind === 'blood_crawler' ||
+    enemy.kind === 'sand_shark' ||
+    enemy.kind === 'alien_cat'
+  ) {
+    const speed =
+      enemy.kind === 'alien_cat'
+        ? 175
+        : enemy.kind === 'sand_shark' || enemy.kind === 'blood_crawler'
+          ? 160
+          : enemy.kind === 'goblin'
+            ? 145
+            : 122;
+    const spawnProjectiles: EnemyProjectileSpawn[] = [];
     if (enemy.aiState === 'patrol') {
       enemy.facing = dir;
       enemy.vx += (dir * speed - enemy.vx) * Math.min(1, dt * 8);
-      if (dist < 140 && Math.abs(dy) < 55 && enemy.stateTimer <= 0 && allowAttackToken) {
+      const engageDist = enemy.kind === 'alien_cat' || enemy.kind === 'antlion' ? 290 : 150;
+      if (dist < engageDist && Math.abs(dy) < 95 && enemy.stateTimer <= 0 && allowAttackToken) {
         enemy.aiState = 'windup';
-        enemy.stateTimer = 0.38;
+        enemy.stateTimer = 0.36;
         enemy.vx = 0;
       }
     } else if (enemy.aiState === 'windup') {
       enemy.vx *= 0.8;
       if (enemy.stateTimer <= 0) {
         enemy.aiState = 'attack';
-        enemy.vx = enemy.facing * (speed * 2.1);
-        if (enemy.onGround) enemy.vy = -210;
-        enemy.stateTimer = 0.42;
+        enemy.vx = enemy.facing * (speed * 2.05);
+        if (enemy.onGround) enemy.vy = enemy.kind === 'alien_cat' ? -330 : -220;
+        enemy.stateTimer = 0.45;
+        if (enemy.kind === 'alien_cat') {
+          spawnProjectiles.push({
+            kind: 'laser',
+            vx: (dx / len) * 440,
+            vy: (dy / len) * 440,
+            color: '#22c55e',
+            radius: 7,
+          });
+        } else if (enemy.kind === 'antlion') {
+          spawnProjectiles.push({
+            kind: 'slime_glob',
+            vx: (dx / len) * 320,
+            vy: (dy / len) * 320 - 50,
+            color: '#eab308',
+            radius: 7,
+          });
+        }
       }
     } else if (enemy.aiState === 'attack') {
       if (enemy.stateTimer <= 0) {
@@ -1466,7 +1326,9 @@ export function stepEnemyAI(
     if (hitWall && enemy.onGround) {
       enemy.vy = -420;
     }
-    return {};
+    return {
+      spawnProjectiles: spawnProjectiles.length > 0 ? spawnProjectiles : undefined,
+    };
   }
 
   // Policy 4: Leaping Ground Bosses (King Slime, Queen Slime, Deerclops, Golem)
@@ -1695,21 +1557,36 @@ export function stepEnemyAI(
     return {};
   }
 
-  // Policy 8: Hover / Bullet-Hell Bosses (Kotulhu, Skele-Cat, Eye Boss, Brain of Cthulhu, The Twins, Skeletron Prime, Plantera, Lunatic Cultist, Moon Lord)
+  // Policy 8: Hover / Bullet-Hell Bosses + Meme Cat Bosses + Martian Saucer
   const isPhase2 = enemy.hp < enemy.maxHp * 0.5;
   enemy.facing = dir;
+  let spawnMinionKind: EnemyKind | undefined;
+  if (enemy.kind === 'pharaoh_cat') {
+    enemy.summonTimer = (enemy.summonTimer ?? 5.5) - dt;
+    if (enemy.summonTimer <= 0) {
+      enemy.summonTimer = 6.5;
+      spawnMinionKind = 'mummy';
+    }
+  }
+
   if (enemy.aiState === 'patrol') {
     const hoverRadius =
-      enemy.kind === 'moon_lord' ? 235 : enemy.kind === 'skele_cat' || enemy.kind === 'skeletron_prime' ? 215 : 185;
+      enemy.kind === 'moon_lord'
+        ? 235
+        : enemy.kind === 'martian_saucer'
+          ? 200
+          : enemy.kind === 'skele_cat' || enemy.kind === 'skeletron_prime'
+            ? 215
+            : 185;
     const speedFactor = isPhase2 ? 0.44 : 0.3;
     const orbitX = player.x + Math.cos(enemy.animPhase * speedFactor) * hoverRadius;
     const orbitY =
       player.y -
-      (enemy.kind === 'moon_lord' ? 155 : enemy.kind === 'skeletron_prime' ? 145 : 120) +
+      (enemy.kind === 'moon_lord' ? 155 : enemy.kind === 'martian_saucer' ? 165 : enemy.kind === 'skeletron_prime' ? 145 : 120) +
       Math.sin(enemy.animPhase * 0.48) * 52;
     const odx = orbitX - enemy.x;
     const ody = orbitY - enemy.y;
-    const maxSpeed = enemy.kind === 'moon_lord' || enemy.kind === 'the_twins' ? 320 : isPhase2 ? 275 : 225;
+    const maxSpeed = enemy.kind === 'moon_lord' || enemy.kind === 'the_twins' || enemy.kind === 'sun_cat' ? 320 : isPhase2 ? 275 : 225;
     enemy.vx += (Math.max(-maxSpeed, Math.min(maxSpeed, odx * 2.5)) - enemy.vx) * Math.min(1, dt * 4.5);
     enemy.vy += (Math.max(-maxSpeed, Math.min(maxSpeed, ody * 2.5)) - enemy.vy) * Math.min(1, dt * 4.5);
     if (enemy.stateTimer <= 0) {
@@ -1720,15 +1597,14 @@ export function stepEnemyAI(
     enemy.vx *= 0.88;
     enemy.vy *= 0.88;
     if (enemy.stateTimer <= 0) {
-      // Brain of Cthulhu teleports across player before lunging
-      if (enemy.kind === 'brain_cthulhu' && Math.random() < 0.55) {
+      if ((enemy.kind === 'brain_cthulhu' || enemy.kind === 'jester_cat') && Math.random() < 0.55) {
         enemy.x = player.x + (Math.random() < 0.5 ? -210 : 210);
         enemy.y = Math.max(48, player.y - 120);
       }
 
       enemy.aiState = 'attack';
       const dashSpeed =
-        enemy.kind === 'the_twins' || enemy.kind === 'skeletron_prime'
+        enemy.kind === 'the_twins' || enemy.kind === 'skeletron_prime' || enemy.kind === 'sun_cat'
           ? 470
           : enemy.kind === 'moon_lord'
             ? 340
@@ -1739,6 +1615,67 @@ export function stepEnemyAI(
       enemy.vy = (dy / len) * dashSpeed;
       enemy.stateTimer = isPhase2 ? 0.56 : 0.65;
 
+      if (enemy.kind === 'martian_saucer') {
+        return {
+          spawnProjectiles: [
+            { kind: 'laser', vx: (dx / len) * 480, vy: (dy / len) * 480, color: '#22c55e', radius: 8 },
+            { kind: 'laser', vx: (dx / len) * 450 + 60, vy: (dy / len) * 450 - 35, color: '#4ade80', radius: 7 },
+            { kind: 'cursed_orb', vx: (dx / len) * 340, vy: (dy / len) * 340 + 40, color: '#38bdf8', radius: 10 },
+          ],
+        };
+      }
+      if (enemy.kind === 'pharaoh_cat') {
+        return {
+          spawnMinionKind,
+          spawnProjectiles: [
+            { kind: 'phantasmal_bolt', vx: (dx / len) * 400, vy: (dy / len) * 400, color: '#facc15', radius: 9 },
+            { kind: 'cursed_orb', vx: (dx / len) * 330 + 60, vy: (dy / len) * 330 - 50, color: '#f59e0b', radius: 9 },
+          ],
+        };
+      }
+      if (enemy.kind === 'jester_cat') {
+        return {
+          spawnProjectiles: [
+            { kind: 'stinger', vx: (dx / len) * 430, vy: (dy / len) * 430, color: '#dc2626', radius: 8 },
+            { kind: 'stinger', vx: (dx / len) * 410 + 65, vy: (dy / len) * 410 - 55, color: '#3b82f6', radius: 8 },
+            { kind: 'stinger', vx: (dx / len) * 410 - 65, vy: (dy / len) * 410 + 55, color: '#facc15', radius: 8 },
+          ],
+        };
+      }
+      if (enemy.kind === 'sun_cat') {
+        return {
+          spawnProjectiles: [
+            { kind: 'phantasmal_bolt', vx: (dx / len) * 460, vy: (dy / len) * 460, color: '#f59e0b', radius: 10 },
+            { kind: 'cursed_orb', vx: (dx / len) * 390 + 70, vy: (dy / len) * 390 - 45, color: '#fef08a', radius: 10 },
+          ],
+        };
+      }
+      if (enemy.kind === 'atomic_cat') {
+        return {
+          spawnProjectiles: [
+            { kind: 'cursed_orb', vx: (dx / len) * 360, vy: (dy / len) * 360 - 30, color: '#facc15', radius: 12 },
+            { kind: 'laser', vx: (dx / len) * 440 + 55, vy: (dy / len) * 440 + 30, color: '#84cc16', radius: 8 },
+          ],
+        };
+      }
+      if (enemy.kind === 'party_cat') {
+        return {
+          spawnProjectiles: [
+            { kind: 'phantasmal_bolt', vx: (dx / len) * 420, vy: (dy / len) * 420, color: '#ec4899', radius: 9 },
+            { kind: 'phantasmal_bolt', vx: (dx / len) * 390 - 55, vy: (dy / len) * 390 + 55, color: '#38bdf8', radius: 9 },
+            { kind: 'cursed_orb', vx: (dx / len) * 350 + 55, vy: (dy / len) * 350 - 55, color: '#facc15', radius: 9 },
+          ],
+        };
+      }
+      if (enemy.kind === 'melon_bandit') {
+        return {
+          spawnProjectiles: [
+            { kind: 'stinger', vx: (dx / len) * 470, vy: (dy / len) * 470, color: '#16a34a', radius: 7 },
+            { kind: 'stinger', vx: (dx / len) * 450 + 40, vy: (dy / len) * 450 - 35, color: '#ef4444', radius: 7 },
+            { kind: 'stinger', vx: (dx / len) * 450 - 40, vy: (dy / len) * 450 + 35, color: '#facc15', radius: 7 },
+          ],
+        };
+      }
       if (enemy.kind === 'the_twins') {
         return {
           spawnProjectiles: [
@@ -1783,6 +1720,7 @@ export function stepEnemyAI(
 
       const globSpeed = enemy.kind === 'skele_cat' ? 330 : 295;
       return {
+        spawnMinionKind,
         spawnSlimeGlob: {
           vx: (dx / len) * globSpeed,
           vy: (dy / len) * globSpeed,
@@ -1804,7 +1742,7 @@ export function stepEnemyAI(
   }
   enemy.x += enemy.vx * dt;
   enemy.y += enemy.vy * dt;
-  return {};
+  return { spawnMinionKind };
 }
 
 export function computeDamageAfterDefense(rawDamage: number, defense: number): number {
@@ -1848,16 +1786,22 @@ export function rollPotDrops(): { coins: number; items: { itemId: string; count:
   const coins = 4 + Math.floor(Math.random() * 11);
   const items: { itemId: string; count: number }[] = [];
   const r = Math.random();
-  if (r < 0.3) {
+  if (r < 0.25) {
     items.push({ itemId: 'torch_item', count: 3 + Math.floor(Math.random() * 4) });
-  } else if (r < 0.55) {
+  } else if (r < 0.46) {
     items.push({ itemId: 'rope_item', count: 4 + Math.floor(Math.random() * 5) });
-  } else if (r < 0.75) {
+  } else if (r < 0.62) {
     items.push({ itemId: 'healing_potion', count: 1 });
-  } else if (r < 0.9) {
+  } else if (r < 0.74) {
     items.push({ itemId: 'terraria_bomb', count: 2 + Math.floor(Math.random() * 3) });
+  } else if (r < 0.82) {
+    items.push({ itemId: 'recall_potion', count: 1 });
+  } else if (r < 0.90) {
+    items.push({ itemId: 'ironskin_potion', count: 1 });
+  } else if (r < 0.95) {
+    items.push({ itemId: 'red_potion', count: 1 });
   } else {
-    items.push({ itemId: 'mana_potion', count: 1 });
+    items.push({ itemId: 'milk_potion', count: 1 });
   }
   return { coins, items };
 }

@@ -1,8 +1,10 @@
+import { BIOME_LABELS, WORLD_VARIANT_LABELS } from './i18n';
 import {
   BiomeType,
   CraftingStation,
   HousingRoomReport,
   InventorySlot,
+  Language,
   TILE_SIZE,
   TileType,
   WORLD_HEIGHT,
@@ -13,10 +15,17 @@ import {
 } from './types';
 
 export const BIOME_NAMES: Record<BiomeType, string> = {
-  forest: 'Лес',
-  snow: 'Снежный биом',
-  crimson: 'Красный биом',
+  forest: 'Forest',
+  snow: 'Snow Tundra',
+  desert: 'Desert & Pyramid',
+  crimson: 'Crimson',
+  crystal: 'Crystal Hollow',
+  ocean: 'Ocean Coast',
 };
+
+export function getBiomeName(biome: BiomeType, lang: Language = 'en'): string {
+  return BIOME_LABELS[biome][lang];
+}
 
 export const WORLD_VARIANTS: Record<
   WorldVariant,
@@ -24,26 +33,39 @@ export const WORLD_VARIANTS: Record<
 > = {
   crimson_classic: {
     id: 'crimson_classic',
-    title: 'Классический Кримзон',
-    subtitle: 'Ровные луга, Снежный запад, Кровавый восток, 5 небесных островов и глубокая преисподняя.',
-    badge: '1000 × 220 • Стандарт',
+    title: WORLD_VARIANT_LABELS.crimson_classic.title.en,
+    subtitle: WORLD_VARIANT_LABELS.crimson_classic.subtitle.en,
+    badge: WORLD_VARIANT_LABELS.crimson_classic.badge.en,
     accent: '#ef4444',
   },
   crystal_highlands: {
     id: 'crystal_highlands',
-    title: 'Небесные пики и Кристальные гроты',
-    subtitle: 'Высокие альпийские хребты, 9 парящих островов с крыльями и богатые кристальные пещеры.',
-    badge: '1000 × 220 • Экстрим',
+    title: WORLD_VARIANT_LABELS.crystal_highlands.title.en,
+    subtitle: WORLD_VARIANT_LABELS.crystal_highlands.subtitle.en,
+    badge: WORLD_VARIANT_LABELS.crystal_highlands.badge.en,
     accent: '#38bdf8',
   },
 };
 
+export function getWorldVariantInfo(variant: WorldVariant, lang: Language = 'en') {
+  const lbl = WORLD_VARIANT_LABELS[variant];
+  return {
+    id: variant,
+    title: lbl.title[lang],
+    subtitle: lbl.subtitle[lang],
+    badge: lbl.badge[lang],
+    accent: WORLD_VARIANTS[variant].accent,
+  };
+}
+
 export function getBiomeAtX(tx: number, width = WORLD_WIDTH): BiomeType {
-  const snowEnd = Math.floor(width * 0.32);
-  const crimsonStart = Math.floor(width * 0.68);
-  if (tx < snowEnd) return 'snow';
-  if (tx >= crimsonStart) return 'crimson';
-  return 'forest';
+  const ratio = tx / Math.max(1, width);
+  if (ratio < 0.1834) return 'snow';       // 0..440
+  if (ratio < 0.375) return 'desert';      // 440..900
+  if (ratio < 0.625) return 'forest';      // 900..1500 (spawn 1200)
+  if (ratio < 0.825) return 'crimson';     // 1500..1980
+  if (ratio < 0.9334) return 'crystal';    // 1980..2240
+  return 'ocean';                          // 2240..2400
 }
 
 function seededRandom(seed: number): () => number {
@@ -107,7 +129,12 @@ export function isTileSolid(tile: TileType): boolean {
     tile !== TileType.Pot &&
     tile !== TileType.Rope &&
     tile !== TileType.LifeCrystal &&
-    tile !== TileType.PiggyBank
+    tile !== TileType.PiggyBank &&
+    tile !== TileType.Cactus &&
+    tile !== TileType.Campfire &&
+    tile !== TileType.HeartLantern &&
+    tile !== TileType.CrimsonAltar &&
+    tile !== TileType.Sunflower
   );
 }
 
@@ -123,12 +150,14 @@ export function getTileRequiredPickPower(tile: TileType): number {
   switch (tile) {
     case TileType.Crimstone:
     case TileType.CrimsonBrick:
+    case TileType.CrimsonTooth:
     case TileType.Marble:
     case TileType.CrystalBlock:
     case TileType.GoldOre:
     case TileType.RubyOre:
       return 2;
     case TileType.Obsidian:
+    case TileType.HellstoneOre:
       return 3;
     default:
       return 1;
@@ -143,11 +172,14 @@ export function getTileMaxDamage(tile: TileType): number {
     case TileType.Platform:
     case TileType.Pot:
     case TileType.Rope:
+    case TileType.Campfire:
+    case TileType.Sunflower:
       return 1;
     case TileType.Dirt:
     case TileType.Grass:
     case TileType.Snow:
     case TileType.Sand:
+    case TileType.Cactus:
     case TileType.CrimsonGrass:
     case TileType.CrimsonDirt:
     case TileType.Glass:
@@ -156,6 +188,7 @@ export function getTileMaxDamage(tile: TileType): number {
     case TileType.Chandelier:
     case TileType.Bookshelf:
     case TileType.PiggyBank:
+    case TileType.HeartLantern:
       return 2;
     case TileType.Wood:
     case TileType.CrimsonWood:
@@ -184,6 +217,8 @@ export function getTileMaxDamage(tile: TileType): number {
     case TileType.IronOre:
     case TileType.Crimstone:
     case TileType.CrimsonBrick:
+    case TileType.CrimsonTooth:
+    case TileType.CrimsonAltar:
     case TileType.Marble:
     case TileType.CrystalBlock:
       return 5;
@@ -192,6 +227,7 @@ export function getTileMaxDamage(tile: TileType): number {
     case TileType.RubyOre:
       return 7;
     case TileType.Obsidian:
+    case TileType.HellstoneOre:
       return 9;
     default:
       return 2;
@@ -211,35 +247,62 @@ export function generateWorld(
   const light = new Float32Array(width * height);
 
   const isHighlands = variant === 'crystal_highlands';
-  const baseSurface = 56;
-  const spawnX = Math.floor(width / 2);
+  const baseSurface = 72;
+  const spawnX = Math.floor(width / 2); // 1200
+  const pyramidX = Math.floor(width * 0.275); // 660 (right in Desert!)
 
-  // 1. Surface contour with flat central clearing for spawning & building
+  // 1. Surface contour with flat Spawn meadow & flat Desert Pyramid plateau
   for (let x = 0; x < width; x++) {
     const biome = getBiomeAtX(x, width);
     const wave1 = isHighlands
-      ? Math.sin(x * 0.045) * 9.5 + Math.sin(x * 0.11) * 4.2
-      : Math.sin(x * 0.055) * (biome === 'snow' ? 5.2 : biome === 'crimson' ? 4.8 : 4.0);
-    const wave2 = isHighlands ? Math.cos(x * 0.16) * 3.1 : Math.cos(x * 0.15) * 2.0;
+      ? Math.sin(x * 0.04) * 11 + Math.sin(x * 0.1) * 4.5
+      : Math.sin(x * 0.048) *
+        (biome === 'snow'
+          ? 5.5
+          : biome === 'desert'
+            ? 3.2
+            : biome === 'crimson'
+              ? 5.2
+              : biome === 'crystal'
+                ? 6.4
+                : biome === 'ocean'
+                  ? 2.2
+                  : 4.2);
+    const wave2 = isHighlands ? Math.cos(x * 0.15) * 3.2 : Math.cos(x * 0.14) * 2.0;
     let sy = Math.round(baseSurface + wave1 + wave2);
 
-    // Flatten spawn meadow so player spawns on comfortable terrain
+    if (biome === 'ocean') {
+      const coastT = (x - Math.floor(width * 0.9334)) / Math.max(1, width * 0.0666);
+      sy = Math.round(baseSurface + 3 + coastT * 10 + Math.sin(x * 0.18) * 1.4);
+    }
+
+    // Flatten spawn meadow
     const distFromCenter = Math.abs(x - spawnX);
-    if (distFromCenter <= 14) {
+    if (distFromCenter <= 18) {
       sy = baseSurface;
-    } else if (distFromCenter <= 24) {
-      const t = (distFromCenter - 14) / 10;
+    } else if (distFromCenter <= 30) {
+      const t = (distFromCenter - 18) / 12;
       sy = Math.round(baseSurface * (1 - t) + sy * t);
     }
-    surfaceHeights[x] = Math.max(32, Math.min(78, sy));
+
+    // Flatten Desert Pyramid plateau around pyramidX = 660
+    const distFromPyramid = Math.abs(x - pyramidX);
+    if (distFromPyramid <= 28) {
+      sy = baseSurface + 2;
+    } else if (distFromPyramid <= 40) {
+      const t = (distFromPyramid - 28) / 12;
+      sy = Math.round((baseSurface + 2) * (1 - t) + sy * t);
+    }
+
+    surfaceHeights[x] = Math.max(42, Math.min(98, sy));
   }
 
   // 2. Biome-aware Terrain Strata + Deep Underworld Obsidian Crust
-  const underworldStart = height - 28; // y = 192..219
+  const underworldStart = height - 48; // y = 332..379
   for (let x = 0; x < width; x++) {
     const sy = surfaceHeights[x];
     const biome = getBiomeAtX(x, width);
-    const soilDepth = 8 + Math.floor(rand() * 4);
+    const soilDepth = 10 + Math.floor(rand() * 5);
 
     for (let y = 0; y < height; y++) {
       const idx = tileIndex(x, y, width);
@@ -256,9 +319,23 @@ export function generateWorld(
         } else if (y < sy + soilDepth) {
           tiles[idx] = rand() < 0.74 ? TileType.Snow : TileType.Ice;
           walls[idx] = WallType.SnowWall;
-        } else if (y < sy + 42) {
+        } else if (y < sy + 64) {
           tiles[idx] = rand() < 0.62 ? TileType.Ice : TileType.Stone;
           walls[idx] = WallType.SnowWall;
+        } else {
+          tiles[idx] = TileType.Stone;
+          walls[idx] = WallType.StoneWall;
+        }
+      } else if (biome === 'desert') {
+        if (y === sy) {
+          tiles[idx] = TileType.Sand;
+          walls[idx] = WallType.None;
+        } else if (y < sy + soilDepth + 12) {
+          tiles[idx] = rand() < 0.88 ? TileType.Sand : TileType.SandstoneBrick;
+          walls[idx] = WallType.SandstoneWall;
+        } else if (y < sy + 72) {
+          tiles[idx] = rand() < 0.45 ? TileType.SandstoneBrick : TileType.Stone;
+          walls[idx] = WallType.SandstoneWall;
         } else {
           tiles[idx] = TileType.Stone;
           walls[idx] = WallType.StoneWall;
@@ -270,12 +347,37 @@ export function generateWorld(
         } else if (y < sy + soilDepth) {
           tiles[idx] = TileType.CrimsonDirt;
           walls[idx] = WallType.CrimsonWall;
-        } else if (y < sy + 52) {
+        } else if (y < sy + 76) {
           tiles[idx] = rand() < 0.8 ? TileType.Crimstone : TileType.Stone;
           walls[idx] = WallType.CrimsonWall;
         } else {
           tiles[idx] = rand() < 0.48 ? TileType.Crimstone : TileType.Stone;
           walls[idx] = WallType.CrimsonWall;
+        }
+      } else if (biome === 'crystal') {
+        const surfChance = isHighlands ? 0.56 : 0.3;
+        const midChance = isHighlands ? 0.48 : 0.24;
+        const deepChance = isHighlands ? 0.36 : 0.16;
+        if (y === sy) {
+          tiles[idx] = rand() < surfChance ? TileType.CrystalBlock : TileType.Grass;
+          walls[idx] = WallType.None;
+        } else if (y < sy + soilDepth) {
+          tiles[idx] = rand() < 0.35 ? TileType.Marble : TileType.Dirt;
+          walls[idx] = WallType.MarbleWall;
+        } else if (y < sy + 80) {
+          tiles[idx] = rand() < midChance ? TileType.CrystalBlock : rand() < 0.5 ? TileType.Marble : TileType.Stone;
+          walls[idx] = WallType.MarbleWall;
+        } else {
+          tiles[idx] = rand() < deepChance ? TileType.CrystalBlock : TileType.Stone;
+          walls[idx] = WallType.StoneWall;
+        }
+      } else if (biome === 'ocean') {
+        if (y < sy + soilDepth + 8) {
+          tiles[idx] = TileType.Sand;
+          walls[idx] = y === sy ? WallType.None : WallType.SandstoneWall;
+        } else {
+          tiles[idx] = TileType.Stone;
+          walls[idx] = WallType.StoneWall;
         }
       } else {
         if (y === sy) {
@@ -284,8 +386,8 @@ export function generateWorld(
         } else if (y < sy + soilDepth) {
           tiles[idx] = TileType.Dirt;
           walls[idx] = WallType.DirtWall;
-        } else if (isHighlands && y > 102 && y < 175 && rand() < 0.16) {
-          tiles[idx] = TileType.Marble;
+        } else if (isHighlands && y > 130 && y < 290 && rand() < 0.22) {
+          tiles[idx] = rand() < 0.35 ? TileType.CrystalBlock : TileType.Marble;
           walls[idx] = WallType.MarbleWall;
         } else {
           tiles[idx] = TileType.Stone;
@@ -295,32 +397,35 @@ export function generateWorld(
     }
   }
 
-  // 3. Carve natural caves across the huge world (+ Underworld hell caverns)
-  const caveCount = isHighlands ? 175 : 145;
+  // 3. Carve natural caves across the huge 2400x380 world
+  const caveCount = isHighlands ? 460 : 380;
   for (let c = 0; c < caveCount; c++) {
-    let cx = 10 + Math.floor(rand() * (width - 20));
-    let cy = surfaceHeights[cx] + 8 + Math.floor(rand() * (height - surfaceHeights[cx] - 18));
-    if (Math.abs(cx - spawnX) < 12 && cy < baseSurface + 16) {
-      cy += 16;
+    let cx = 12 + Math.floor(rand() * (width - 24));
+    let cy = surfaceHeights[cx] + 10 + Math.floor(rand() * (height - surfaceHeights[cx] - 22));
+    if (Math.abs(cx - spawnX) < 16 && cy < baseSurface + 20) {
+      cy += 20;
     }
-    const steps = 26 + Math.floor(rand() * 44);
+    if (Math.abs(cx - pyramidX) < 30 && cy < baseSurface + 32) {
+      cy += 34;
+    }
+    const steps = 32 + Math.floor(rand() * 58);
     let angle = rand() * Math.PI * 2;
     for (let s = 0; s < steps; s++) {
-      const r = 1.9 + rand() * 2.5;
+      const r = 2.0 + rand() * 2.8;
       for (let dy = -3; dy <= 3; dy++) {
         for (let dx = -3; dx <= 3; dx++) {
           if (dx * dx + dy * dy <= r * r) {
             const tx = Math.round(cx + dx);
             const ty = Math.round(cy + dy);
-            if (tx > 1 && tx < width - 2 && ty > surfaceHeights[tx] + 3 && ty < height - 3) {
+            if (tx > 1 && tx < width - 2 && ty > surfaceHeights[tx] + 4 && ty < height - 3) {
               tiles[tileIndex(tx, ty, width)] = TileType.Air;
             }
           }
         }
       }
-      angle += (rand() - 0.5) * 0.9;
-      cx += Math.cos(angle) * 1.75;
-      cy += Math.sin(angle) * 1.3;
+      angle += (rand() - 0.5) * 0.85;
+      cx += Math.cos(angle) * 1.8;
+      cy += Math.sin(angle) * 1.35;
     }
   }
 
@@ -336,7 +441,8 @@ export function generateWorld(
     for (let i = 0; i < count; i++) {
       const ox = 4 + Math.floor(rand() * (width - 8));
       if (biomeFilter && getBiomeAtX(ox, width) !== biomeFilter) continue;
-      const minY = Math.min(height - 5, surfaceHeights[ox] + minDepthOffset);
+      if (Math.abs(ox - pyramidX) < 28) continue;
+      const minY = Math.min(height - 6, surfaceHeights[ox] + minDepthOffset);
       if (minY >= maxY) continue;
       const oy = minY + Math.floor(rand() * (maxY - minY));
       for (let j = 0; j < veinSize; j++) {
@@ -351,6 +457,7 @@ export function generateWorld(
             cur === TileType.Crimstone ||
             cur === TileType.CrimsonDirt ||
             cur === TileType.Snow ||
+            cur === TileType.Sand ||
             cur === TileType.Marble
           ) {
             tiles[tileIndex(vx, vy, width)] = tile;
@@ -360,30 +467,59 @@ export function generateWorld(
     }
   };
 
-  const oreMult = isHighlands ? 1.35 : 1;
-  placeOreVeins(TileType.CoalOre, Math.round(320 * oreMult), 3, height - 6, 7);
-  placeOreVeins(TileType.CopperOre, Math.round(290 * oreMult), 3, height - 16, 7);
-  placeOreVeins(TileType.IronOre, Math.round(250 * oreMult), 8, height - 4, 6);
-  placeOreVeins(TileType.GoldOre, Math.round(180 * oreMult), 22, height - 3, 5);
-  placeOreVeins(TileType.RubyOre, Math.round(130 * oreMult), 36, height - 3, 4);
-  placeOreVeins(TileType.Sand, 85, 2, 92, 9, 'forest');
-  placeOreVeins(TileType.Marble, isHighlands ? 150 : 90, 26, height - 24, 9);
-  placeOreVeins(TileType.CrystalBlock, isHighlands ? 160 : 80, 42, height - 12, 6);
-  placeOreVeins(TileType.Obsidian, 110, 72, height - 2, 7);
+  const oreMult = isHighlands ? 1.4 : 1;
+  placeOreVeins(TileType.CoalOre, Math.round(920 * oreMult), 4, height - 8, 8);
+  placeOreVeins(TileType.CopperOre, Math.round(820 * oreMult), 4, height - 20, 7);
+  placeOreVeins(TileType.IronOre, Math.round(740 * oreMult), 10, height - 6, 7);
+  placeOreVeins(TileType.GoldOre, Math.round(540 * oreMult), 28, height - 4, 6);
+  placeOreVeins(TileType.RubyOre, Math.round(390 * oreMult), 48, height - 4, 5);
+  placeOreVeins(TileType.Marble, isHighlands ? 420 : 250, 34, height - 30, 10);
+  placeOreVeins(TileType.CrystalBlock, isHighlands ? 950 : 210, 42, height - 14, isHighlands ? 10 : 7);
+  placeOreVeins(TileType.Obsidian, 310, 110, height - 3, 8);
 
-  // 5. Biome Trees
+  // Underworld Hellstone Ore veins (y >= underworldStart)
+  for (let i = 0; i < 240; i++) {
+    const ox = 8 + Math.floor(rand() * (width - 16));
+    const oy = underworldStart + 3 + Math.floor(rand() * Math.max(4, height - underworldStart - 6));
+    for (let j = 0; j < 6; j++) {
+      const vx = ox + Math.floor((rand() - 0.5) * 4);
+      const vy = oy + Math.floor((rand() - 0.5) * 4);
+      if (vx > 2 && vx < width - 3 && vy >= underworldStart && vy < height - 2) {
+        tiles[tileIndex(vx, vy, width)] = TileType.HellstoneOre;
+      }
+    }
+  }
+
+  // 5. Biome Trees & Desert Cacti
   let lastTreeX = -10;
-  for (let x = 6; x < width - 6; x++) {
-    if (Math.abs(x - spawnX) <= 9) continue;
+  for (let x = 8; x < width - 8; x++) {
+    if (Math.abs(x - spawnX) <= 10) continue;
+    if (Math.abs(x - pyramidX) <= 29) continue;
+    if (Math.abs(x - 1615) <= 22 || Math.abs(x - 1835) <= 22) continue;
+    if (Math.abs(x - 1040) <= 10 || Math.abs(x - 320) <= 10) continue;
     if (x - lastTreeX < 5) continue;
-    if (rand() < 0.31) {
-      const sy = surfaceHeights[x];
-      const ground = tiles[tileIndex(x, sy, width)];
-      const biome = getBiomeAtX(x, width);
+
+    const sy = surfaceHeights[x];
+    const ground = tiles[tileIndex(x, sy, width)];
+    const biome = getBiomeAtX(x, width);
+
+    if (biome === 'desert' && ground === TileType.Sand) {
+      if (rand() < 0.24) {
+        const ch = 2 + Math.floor(rand() * 3);
+        for (let h = 1; h <= ch; h++) {
+          if (sy - h > 2) tiles[tileIndex(x, sy - h, width)] = TileType.Cactus;
+        }
+        lastTreeX = x;
+      }
+      continue;
+    }
+
+    if (rand() < 0.3) {
       if (
         ground === TileType.Grass ||
         ground === TileType.Snow ||
-        ground === TileType.CrimsonGrass
+        ground === TileType.CrimsonGrass ||
+        ground === TileType.CrystalBlock
       ) {
         const trunkTile = biome === 'crimson' ? TileType.CrimsonWood : TileType.Wood;
         const leafTile =
@@ -418,13 +554,20 @@ export function generateWorld(
     }
   }
 
-  // 6. Welcome camp at center spawn
+  // 6. Welcome camp at center spawn (1200) + Campfire & Sunflowers
   const sySpawn = surfaceHeights[spawnX];
   tiles[tileIndex(spawnX - 3, sySpawn - 1, width)] = TileType.Torch;
   tiles[tileIndex(spawnX + 3, sySpawn - 1, width)] = TileType.Torch;
   tiles[tileIndex(spawnX + 2, sySpawn - 1, width)] = TileType.Stool;
+  tiles[tileIndex(spawnX - 5, sySpawn - 1, width)] = TileType.Campfire;
+  if (tiles[tileIndex(spawnX + 7, surfaceHeights[spawnX + 7], width)] === TileType.Grass) {
+    tiles[tileIndex(spawnX + 7, surfaceHeights[spawnX + 7] - 1, width)] = TileType.Sunflower;
+  }
+  if (tiles[tileIndex(spawnX - 9, surfaceHeights[spawnX - 9], width)] === TileType.Grass) {
+    tiles[tileIndex(spawnX - 9, surfaceHeights[spawnX - 9] - 1, width)] = TileType.Sunflower;
+  }
 
-  // 7. Treasure Chest Helper & Sky Islands
+  // 7. Treasure Chest Helper
   const chests: Record<number, InventorySlot[]> = {};
   const placeChest = (cx: number, cy: number, loot: InventorySlot[]) => {
     if (cx < 2 || cx >= width - 2 || cy < 2 || cy >= height - 2) return;
@@ -437,10 +580,270 @@ export function generateWorld(
     chests[idx] = loot;
   };
 
-  // Floating Sky Islands (5 in Classic, 9 in Crystal Highlands!)
+  // === 7.2 TERRARIA CRIMSON MONSTER-MOUTH CAVE ENTRANCES (x = 1615 & x = 1835) ===
+  const carveCrimsonMouthCave = (mouthX: number, slotSeed: number) => {
+    const sy = surfaceHeights[mouthX];
+    // Clear sky overhang & level left approach shelf so no floating grass appears near the maw
+    for (let dx = -17; dx <= 16; dx++) {
+      const wx = mouthX + dx;
+      if (wx <= 2 || wx >= width - 3) continue;
+      if (dx <= -12) {
+        // Flat Crimson approach path right into the open mouth
+        for (let wy = Math.max(4, sy - 24); wy <= sy - 1; wy++) {
+          tiles[tileIndex(wx, wy, width)] = TileType.Air;
+          walls[tileIndex(wx, wy, width)] = WallType.None;
+        }
+        tiles[tileIndex(wx, sy, width)] = TileType.CrimsonGrass;
+        for (let wy = sy + 1; wy <= sy + 6; wy++) {
+          if (tiles[tileIndex(wx, wy, width)] === TileType.Air) {
+            tiles[tileIndex(wx, wy, width)] = TileType.Crimstone;
+          }
+        }
+      } else if (dx >= 13) {
+        // Taper back down cleanly to natural Crimson terrain on the right
+        const stepY = sy + Math.round((dx - 13) * 0.5);
+        const clearTo = Math.min(surfaceHeights[wx], stepY);
+        for (let wy = Math.max(4, sy - 24); wy < clearTo; wy++) {
+          tiles[tileIndex(wx, wy, width)] = TileType.Air;
+          walls[tileIndex(wx, wy, width)] = WallType.None;
+        }
+        if (tiles[tileIndex(wx, clearTo, width)] === TileType.Air) {
+          tiles[tileIndex(wx, clearTo, width)] = TileType.CrimsonGrass;
+        }
+      }
+    }
+
+    // Upper & lower organic Crimstone monster jaws framing a gaping left-facing mouth
+    for (let dx = -11; dx <= 12; dx++) {
+      const wx = mouthX + dx;
+      const jawArch = Math.round(Math.sqrt(Math.max(0, 144 - dx * dx)) * 0.65) + 2;
+      // Clear everything strictly above the skull dome
+      for (let wy = Math.max(4, sy - 24); wy < sy - jawArch - 3; wy++) {
+        tiles[tileIndex(wx, wy, width)] = TileType.Air;
+        walls[tileIndex(wx, wy, width)] = WallType.None;
+      }
+      // Upper jaw / monster cranium arch (open on left edge dx=-11..-9!)
+      for (let dy = -jawArch - 3; dy <= -jawArch + 1; dy++) {
+        const wy = sy + dy;
+        if (wy > 3 && wy < height - 4) {
+          const isOuter = dy === -jawArch - 3;
+          tiles[tileIndex(wx, wy, width)] = isOuter ? TileType.CrimsonGrass : TileType.Crimstone;
+          walls[tileIndex(wx, wy, width)] = WallType.CrimsonWall;
+        }
+      }
+      // Clear hollow gaping mouth interior & paint CrimsonWall throat
+      const mouthFloorDy = dx <= -7 ? 0 : 4;
+      for (let dy = -jawArch + 2; dy <= mouthFloorDy; dy++) {
+        const wy = sy + dy;
+        if (wy > 3 && wy < height - 4) {
+          tiles[tileIndex(wx, wy, width)] = TileType.Air;
+          walls[tileIndex(wx, wy, width)] = dx <= -9 && dy < -3 ? WallType.None : WallType.CrimsonWall;
+        }
+      }
+      // Back wall of jaw curving down behind the maw (dx = 10..12)
+      if (dx >= 10) {
+        for (let dy = -jawArch + 2; dy <= 5; dy++) {
+          const wy = sy + dy;
+          tiles[tileIndex(wx, wy, width)] = dy === -jawArch + 2 && dx === 12 ? TileType.CrimsonGrass : TileType.Crimstone;
+          walls[tileIndex(wx, wy, width)] = WallType.CrimsonWall;
+        }
+      }
+      // Lower jaw gums & fleshy ridge
+      for (let dy = mouthFloorDy + 1; dy <= 8; dy++) {
+        const wy = sy + dy;
+        if (wy > 3 && wy < height - 4) {
+          tiles[tileIndex(wx, wy, width)] =
+            dx <= -8 && dy === mouthFloorDy + 1 ? TileType.CrimsonGrass : TileType.Crimstone;
+          walls[tileIndex(wx, wy, width)] = WallType.CrimsonWall;
+        }
+      }
+    }
+
+    // Sharp ivory CrimsonTooth fangs pointing into the gaping maw!
+    const upperFangs = [-9, -5, -1, 3, 7];
+    for (const fdx of upperFangs) {
+      const fx = mouthX + fdx;
+      const archY = sy - Math.round(Math.sqrt(Math.max(0, 144 - fdx * fdx)) * 0.65);
+      const toothLen = Math.abs(fdx) <= 3 ? 3 : 2;
+      for (let t = 0; t < toothLen; t++) {
+        tiles[tileIndex(fx, archY + t, width)] = TileType.CrimsonTooth;
+      }
+    }
+    const lowerFangs = [-6, -2, 2, 6];
+    for (const fdx of lowerFangs) {
+      const fx = mouthX + fdx;
+      const toothLen = Math.abs(fdx) <= 2 ? 2 : 1;
+      for (let t = 0; t < toothLen; t++) {
+        tiles[tileIndex(fx, sy + 4 - t, width)] = TileType.CrimsonTooth;
+      }
+    }
+
+    // Subtle crimson throat glow torch inside back of jaw
+    tiles[tileIndex(mouthX + 8, sy + 1, width)] = TileType.Torch;
+
+    // Open throat entrance through lower jaw + diagonal gullet tunnel down to Altar Heart Chamber
+    const chamberX = mouthX + (slotSeed % 2 === 0 ? 5 : -3);
+    const chamberY = Math.min(height - 30, sy + 42);
+    const steps = 46;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const cx = Math.round((mouthX + 3) + Math.sin(t * Math.PI) * 4 + (chamberX - (mouthX + 3)) * t);
+      const cy = Math.round(sy + 4 + (chamberY - sy - 4) * t);
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          if (dx * dx + dy * dy <= 10) {
+            const tx = cx + dx;
+            const ty = cy + dy;
+            if (tx > 2 && tx < width - 3 && ty > 3 && ty < height - 4) {
+              tiles[tileIndex(tx, ty, width)] = TileType.Air;
+              walls[tileIndex(tx, ty, width)] = WallType.CrimsonWall;
+            }
+          }
+        }
+      }
+      if (s % 5 === 0) {
+        tiles[tileIndex(cx - 1, cy + 2, width)] = TileType.Platform;
+        tiles[tileIndex(cx, cy + 2, width)] = TileType.Platform;
+        tiles[tileIndex(cx + 1, cy + 2, width)] = TileType.Platform;
+      }
+    }
+
+    // Crimson Heart / Altar Cavern at bottom of throat
+    for (let dx = -12; dx <= 12; dx++) {
+      for (let dy = -6; dy <= 4; dy++) {
+        if ((dx * dx) / 144 + (dy * dy) / 36 <= 1.05) {
+          const tx = chamberX + dx;
+          const ty = chamberY + dy;
+          if (tx > 2 && tx < width - 3 && ty > 3 && ty < height - 4) {
+            tiles[tileIndex(tx, ty, width)] = dy >= 3 ? TileType.CrimsonBrick : TileType.Air;
+            walls[tileIndex(tx, ty, width)] = WallType.CrimsonWall;
+          }
+        }
+      }
+    }
+    tiles[tileIndex(chamberX - 4, chamberY + 2, width)] = TileType.CrimsonAltar;
+    tiles[tileIndex(chamberX + 4, chamberY + 2, width)] = TileType.CrimsonAltar;
+    tiles[tileIndex(chamberX - 7, chamberY + 2, width)] = TileType.LifeCrystal;
+    tiles[tileIndex(chamberX + 7, chamberY + 2, width)] = TileType.Pot;
+    tiles[tileIndex(chamberX - 6, chamberY + 1, width)] = TileType.Torch;
+    tiles[tileIndex(chamberX + 6, chamberY + 1, width)] = TileType.Torch;
+    placeChest(chamberX, chamberY + 2, [
+      { itemId: 'vampire_knives', count: 1 },
+      { itemId: 'red_potion', count: 3 },
+      { itemId: 'milk_potion', count: 3 },
+      { itemId: 'summon_brain_cthulhu', count: 2 },
+      { itemId: 'crimson_brick', count: 32 },
+    ]);
+  };
+
+  carveCrimsonMouthCave(1615, 0);
+  carveCrimsonMouthCave(1835, 1);
+
+  // Natural Surface Cave Mouths in Forest (x = 1040) & Snow (x = 320)
+  for (const caveX of [1040, 320]) {
+    const sy = surfaceHeights[caveX];
+    for (let s = 0; s < 32; s++) {
+      const cx = caveX + Math.round(Math.sin(s * 0.22) * 3);
+      const cy = sy + s;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          if (dx * dx + dy * dy <= 9) {
+            const tx = cx + dx;
+            const ty = cy + dy;
+            if (tx > 2 && tx < width - 3 && ty > 3 && ty < height - 4) {
+              tiles[tileIndex(tx, ty, width)] = TileType.Air;
+              walls[tileIndex(tx, ty, width)] = caveX < 450 ? WallType.SnowWall : WallType.StoneWall;
+            }
+          }
+        }
+      }
+      if (s % 5 === 3) {
+        tiles[tileIndex(cx, cy + 1, width)] = TileType.Platform;
+        tiles[tileIndex(cx + 1, cy + 1, width)] = TileType.Platform;
+      }
+    }
+    tiles[tileIndex(caveX - 3, sy - 1, width)] = TileType.Campfire;
+  }
+
+  // === 7.5 DESERT SANDSTONE PYRAMID (centered at pyramidX = 660) ===
+  const pyrBaseY = surfaceHeights[pyramidX];
+  const pyrHalf = 22;
+  // Build stepped pyramid exterior & sandstone interior
+  for (let layer = 0; layer < pyrHalf; layer++) {
+    const y = pyrBaseY - 1 - layer;
+    const span = pyrHalf - layer;
+    for (let dx = -span; dx <= span; dx++) {
+      const tx = pyramidX + dx;
+      const idx = tileIndex(tx, y, width);
+      const isEdge = Math.abs(dx) >= span - 1 || layer === pyrHalf - 1;
+      walls[idx] = WallType.SandstoneWall;
+      tiles[idx] = isEdge ? TileType.SandstoneBrick : TileType.Air;
+    }
+  }
+  // Open left & right entrance doorways at ground level
+  for (const side of [-1, 1]) {
+    const doorX = pyramidX + side * pyrHalf;
+    tiles[tileIndex(doorX, pyrBaseY - 1, width)] = TileType.DoorClosed;
+    tiles[tileIndex(doorX, pyrBaseY - 2, width)] = TileType.DoorClosed;
+    tiles[tileIndex(doorX - side, pyrBaseY - 1, width)] = TileType.Air;
+    tiles[tileIndex(doorX - side, pyrBaseY - 2, width)] = TileType.Air;
+    tiles[tileIndex(doorX - side * 2, pyrBaseY - 3, width)] = TileType.Torch;
+    tiles[tileIndex(doorX + side, pyrBaseY, width)] = TileType.SandstoneBrick;
+    tiles[tileIndex(doorX, pyrBaseY, width)] = TileType.SandstoneBrick;
+  }
+  // Interior Burial Chamber right under pyramid floor + Platforms for exploring!
+  const chamberFloorY = pyrBaseY + 12;
+  for (let x = pyramidX - 15; x <= pyramidX + 15; x++) {
+    for (let y = pyrBaseY; y <= chamberFloorY + 2; y++) {
+      const idx = tileIndex(x, y, width);
+      walls[idx] = WallType.SandstoneWall;
+      if (
+        y === chamberFloorY ||
+        y === chamberFloorY + 1 ||
+        y === chamberFloorY + 2 ||
+        Math.abs(x - pyramidX) >= 14
+      ) {
+        tiles[idx] = TileType.SandstoneBrick;
+      } else {
+        tiles[idx] = TileType.Air;
+      }
+    }
+  }
+  // Entrance shaft down into the Pharaoh Chamber with Rope & Platforms
+  for (let y = pyrBaseY - 1; y < chamberFloorY; y++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      tiles[tileIndex(pyramidX + dx, y, width)] = TileType.Air;
+      walls[tileIndex(pyramidX + dx, y, width)] = WallType.SandstoneWall;
+    }
+    tiles[tileIndex(pyramidX, y, width)] = TileType.Rope;
+    if (y % 4 === 0) {
+      tiles[tileIndex(pyramidX - 1, y, width)] = TileType.Platform;
+      tiles[tileIndex(pyramidX + 1, y, width)] = TileType.Platform;
+    }
+  }
+  // Decorate Pharaoh Chamber (Chandeliers, Torches, Tables, Pots, Pharaoh Chest!)
+  tiles[tileIndex(pyramidX - 8, pyrBaseY - 1, width)] = TileType.Torch;
+  tiles[tileIndex(pyramidX + 8, pyrBaseY - 1, width)] = TileType.Torch;
+  tiles[tileIndex(pyramidX, pyrBaseY - 10, width)] = TileType.Chandelier;
+  tiles[tileIndex(pyramidX - 6, chamberFloorY - 5, width)] = TileType.Chandelier;
+  tiles[tileIndex(pyramidX + 6, chamberFloorY - 5, width)] = TileType.Chandelier;
+  tiles[tileIndex(pyramidX - 10, chamberFloorY - 1, width)] = TileType.Pot;
+  tiles[tileIndex(pyramidX + 10, chamberFloorY - 1, width)] = TileType.Pot;
+  tiles[tileIndex(pyramidX - 5, chamberFloorY - 1, width)] = TileType.Pot;
+  tiles[tileIndex(pyramidX + 5, chamberFloorY - 1, width)] = TileType.Pot;
+  placeChest(pyramidX, chamberFloorY - 1, [
+    { itemId: 'summon_pharaoh_cat', count: 3 },
+    { itemId: 'pharaoh_staff', count: 1 },
+    { itemId: 'gold_bar', count: 10 },
+    { itemId: 'healing_potion', count: 4 },
+    { itemId: 'sandstone_brick', count: 40 },
+    { itemId: 'summon_alien_invasion', count: 1 },
+  ]);
+
+  // 8. Floating Sky Islands across 2400-wide sky
   const skyIslandCols = isHighlands
-    ? [90, 190, 295, 405, 500, 610, 725, 830, 925]
-    : [115, 290, 440, 635, 865];
+    ? [180, 380, 560, 780, 990, 1200, 1420, 1640, 1860, 2060, 2240]
+    : [220, 560, 950, 1450, 1840, 2180];
 
   const skyLootPool: InventorySlot[][] = [
     [
@@ -465,12 +868,12 @@ export function generateWorld(
       { itemId: 'starfury', count: 1 },
       { itemId: 'shiny_red_balloon', count: 1 },
       { itemId: 'summon_queen_slime', count: 1 },
-      { itemId: 'crystal_block', count: 20 },
+      { itemId: 'summon_sun_cat', count: 1 },
     ],
   ];
 
   skyIslandCols.forEach((ix, idx) => {
-    const iy = 15 + (idx % 3) * 5;
+    const iy = 24 + (idx % 3) * 6;
     const halfW = 8;
     for (let dx = -halfW; dx <= halfW; dx++) {
       const tx = ix + dx;
@@ -487,7 +890,6 @@ export function generateWorld(
           isHighlands && dy === 1 ? TileType.Marble : TileType.Dirt;
       }
     }
-    // Small shrine hut & chest on sky island
     for (let dx = -3; dx <= 3; dx++) {
       for (let dy = -3; dy <= -1; dy++) {
         tiles[tileIndex(ix + dx, iy + dy, width)] = TileType.Air;
@@ -506,7 +908,7 @@ export function generateWorld(
     placeChest(ix, iy - 1, skyLootPool[idx % skyLootPool.length]);
   });
 
-  // Surface Chests near spawn (Kotulhu & Cat Worm basics preserved!)
+  // Surface Chests near Spawn (Kotulhu & Cat Worm basics!)
   const leftChestX = spawnX - 15;
   placeChest(leftChestX, surfaceHeights[leftChestX] - 1, [
     { itemId: 'summon_kotulhu', count: 2 },
@@ -520,13 +922,15 @@ export function generateWorld(
   placeChest(rightChestX, surfaceHeights[rightChestX] - 1, [
     { itemId: 'summon_cat_worm', count: 2 },
     { itemId: 'shackle', count: 1 },
-    { itemId: 'warm_milk', count: 2 },
+    { itemId: 'red_potion', count: 2 },
+    { itemId: 'milk_potion', count: 2 },
+    { itemId: 'ironskin_potion', count: 2 },
     { itemId: 'yarn_bomb', count: 8 },
     { itemId: 'iron_bar', count: 6 },
   ]);
 
-  // Snow biome surface chest (14% of width = 140)
-  const snowChestX = Math.floor(width * 0.14);
+  // Snow biome surface chest (~x=220)
+  const snowChestX = 220;
   placeChest(snowChestX, surfaceHeights[snowChestX] - 1, [
     { itemId: 'ice_blade', count: 1 },
     { itemId: 'ice_pickaxe', count: 1 },
@@ -535,23 +939,53 @@ export function generateWorld(
     { itemId: 'snow_brick', count: 24 },
   ]);
 
-  // Crimson biome surface chest (86% of width = 860)
-  const crimsonChestX = Math.floor(width * 0.86);
+  // Desert outpost chest (~x=510)
+  const desertChestX = 510;
+  placeChest(desertChestX, surfaceHeights[desertChestX] - 1, [
+    { itemId: 'summon_pharaoh_cat', count: 2 },
+    { itemId: 'sandstone_brick', count: 32 },
+    { itemId: 'healing_potion', count: 3 },
+    { itemId: 'summon_melon_bandit', count: 1 },
+  ]);
+
+  // Crimson biome surface chest (~x=1750)
+  const crimsonChestX = 1750;
   placeChest(crimsonChestX, surfaceHeights[crimsonChestX] - 1, [
     { itemId: 'crimson_bow', count: 1 },
     { itemId: 'hermes_boots', count: 1 },
     { itemId: 'summon_brain_cthulhu', count: 1 },
+    { itemId: 'summon_jester_cat', count: 1 },
     { itemId: 'crimson_brick', count: 24 },
-    { itemId: 'catnip_elixir', count: 1 },
   ]);
 
-  // Underground cave & underworld chests scaled across 1000-wide map
+  // Crystal Hollow chest (~x=2100)
+  const crystalChestX = 2100;
+  placeChest(crystalChestX, surfaceHeights[crystalChestX] - 1, [
+    { itemId: 'crystal_bow', count: 1 },
+    { itemId: 'summon_queen_slime', count: 1 },
+    { itemId: 'summon_party_cat', count: 1 },
+    { itemId: 'crystal_block', count: 24 },
+  ]);
+
+  // Ocean Coast chest (~x=2320)
+  const oceanChestX = 2320;
+  placeChest(oceanChestX, surfaceHeights[oceanChestX] - 1, [
+    { itemId: 'fish_spear', count: 1 },
+    { itemId: 'summon_duke_fishron', count: 1 },
+    { itemId: 'summon_atomic_cat', count: 1 },
+    { itemId: 'crispy_fish', count: 6 },
+    { itemId: 'angel_wings', count: 1 },
+  ]);
+
+  // Underground cave & underworld chests scaled across 2400-wide map
   const caveLootTables: InventorySlot[][] = [
     [
       { itemId: 'summon_king_slime', count: 1 },
       { itemId: 'summon_kotulhu', count: 1 },
+      { itemId: 'enchanted_sword', count: 1 },
       { itemId: 'magic_mirror', count: 1 },
       { itemId: 'iron_chestplate', count: 1 },
+      { itemId: 'red_potion', count: 1 },
       { itemId: 'copper_bar', count: 10 },
     ],
     [
@@ -559,20 +993,23 @@ export function generateWorld(
       { itemId: 'summon_queen_bee', count: 1 },
       { itemId: 'ice_bow', count: 1 },
       { itemId: 'cloud_in_bottle', count: 1 },
+      { itemId: 'milk_potion', count: 2 },
       { itemId: 'gold_bar', count: 6 },
     ],
     [
       { itemId: 'summon_eye_boss', count: 1 },
       { itemId: 'cobalt_shield', count: 1 },
       { itemId: 'grappling_hook', count: 1 },
-      { itemId: 'catnip_elixir', count: 1 },
+      { itemId: 'ironskin_potion', count: 2 },
+      { itemId: 'regen_potion', count: 2 },
       { itemId: 'ruby_gem', count: 2 },
     ],
     [
       { itemId: 'summon_skele_cat', count: 1 },
       { itemId: 'water_bolt', count: 1 },
       { itemId: 'gold_helmet', count: 1 },
-      { itemId: 'warm_milk', count: 3 },
+      { itemId: 'swiftness_potion', count: 2 },
+      { itemId: 'recall_potion', count: 2 },
       { itemId: 'crystal_block', count: 14 },
     ],
     [
@@ -587,16 +1024,19 @@ export function generateWorld(
       { itemId: 'crimson_pickaxe', count: 1 },
       { itemId: 'band_of_regen', count: 1 },
       { itemId: 'obsidian_block', count: 16 },
+      { itemId: 'heart_lantern_item', count: 1 },
       { itemId: 'mana_flower', count: 1 },
     ],
   ];
 
-  const chestFractions = [0.08, 0.16, 0.24, 0.34, 0.42, 0.58, 0.66, 0.74, 0.82, 0.9, 0.95];
+  const chestFractions = [
+    0.05, 0.11, 0.17, 0.24, 0.33, 0.4, 0.46, 0.54, 0.6, 0.68, 0.75, 0.82, 0.88, 0.94,
+  ];
   chestFractions.forEach((frac, i) => {
     const cx = Math.floor(width * frac);
     const sy = surfaceHeights[cx];
-    const targetDepth = sy + 16 + (i % 4) * 26;
-    const cy = Math.min(height - 10, targetDepth);
+    const targetDepth = sy + 28 + (i % 5) * 42;
+    const cy = Math.min(height - 14, targetDepth);
     for (let dx = -2; dx <= 2; dx++) {
       for (let dy = -2; dy <= 0; dy++) {
         tiles[tileIndex(cx + dx, cy + dy, width)] = TileType.Air;
@@ -608,9 +1048,9 @@ export function generateWorld(
     placeChest(cx, cy, caveLootTables[i % caveLootTables.length]);
   });
 
-  // Underworld Sanctuary Chest at center deep (x=500, y=195)
+  // Underworld Sanctuary Chest at center deep (x=1200, y=337)
   const uwX = spawnX;
-  const uwY = underworldStart + 4;
+  const uwY = underworldStart + 5;
   for (let dx = -3; dx <= 3; dx++) {
     for (let dy = -3; dy <= 0; dy++) {
       tiles[tileIndex(uwX + dx, uwY + dy, width)] = TileType.Air;
@@ -626,13 +1066,14 @@ export function generateWorld(
     { itemId: 'obsidian_pickaxe', count: 1 },
     { itemId: 'dynamite', count: 10 },
     { itemId: 'summon_golem', count: 1 },
+    { itemId: 'summon_cultist', count: 1 },
   ]);
 
-  // 8. Scatter Breakable Pots & Life Crystals across the huge caves
+  // 9. Scatter Breakable Pots & Life Crystals across 2400x380 caves
   let potsPlaced = 0;
-  for (let attempt = 0; attempt < 1600 && potsPlaced < 150; attempt++) {
-    const px = 6 + Math.floor(rand() * (width - 12));
-    const py = surfaceHeights[px] + 6 + Math.floor(rand() * (height - surfaceHeights[px] - 10));
+  for (let attempt = 0; attempt < 4200 && potsPlaced < 420; attempt++) {
+    const px = 8 + Math.floor(rand() * (width - 16));
+    const py = surfaceHeights[px] + 8 + Math.floor(rand() * (height - surfaceHeights[px] - 12));
     const idx = tileIndex(px, py, width);
     const below = tiles[tileIndex(px, py + 1, width)] as TileType;
     if (tiles[idx] === TileType.Air && isTileSolid(below)) {
@@ -641,12 +1082,12 @@ export function generateWorld(
     }
   }
 
-  const targetCrystals = isHighlands ? 56 : 45;
+  const targetCrystals = isHighlands ? 140 : 110;
   let crystalsPlaced = 0;
-  for (let attempt = 0; attempt < 1800 && crystalsPlaced < targetCrystals; attempt++) {
+  for (let attempt = 0; attempt < 4600 && crystalsPlaced < targetCrystals; attempt++) {
     const cx = 8 + Math.floor(rand() * (width - 16));
-    const minCy = Math.min(height - 10, surfaceHeights[cx] + 22);
-    const cy = minCy + Math.floor(rand() * Math.max(1, height - 6 - minCy));
+    const minCy = Math.min(height - 12, surfaceHeights[cx] + 30);
+    const cy = minCy + Math.floor(rand() * Math.max(1, height - 8 - minCy));
     const idx = tileIndex(cx, cy, width);
     const below = tiles[tileIndex(cx, cy + 1, width)] as TileType;
     if (tiles[idx] === TileType.Air && isTileSolid(below)) {
@@ -660,23 +1101,33 @@ export function generateWorld(
   return world;
 }
 
-// Reusable scratch buffer so recomputeLighting allocates zero heap memory during gameplay
+// Reusable scratch buffer so lighting recomputation allocates zero heap memory during gameplay
 let lightQueueScratch: Int32Array | null = null;
 
 /**
- * Fast BFS lighting (0.06..1.0) optimized for 1000x220 worlds.
+ * Region-bounded BFS lighting (0.06..1.0) so even 2400x380 worlds update in <2ms around the camera.
  */
-export function recomputeLighting(world: WorldData, timeOfDay: number): void {
+export function recomputeLightingRegion(
+  world: WorldData,
+  timeOfDay: number,
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+): void {
   const { width, height, tiles, walls, light } = world;
-  const total = width * height;
+  const x0 = Math.max(0, minX);
+  const x1 = Math.min(width - 1, maxX);
+  const y0 = Math.max(0, minY);
+  const y1 = Math.min(height - 1, maxY);
+
   const sunAngle = timeOfDay * Math.PI * 2;
   const dayFactor = Math.max(0, Math.min(1, 0.5 + 0.5 * Math.sin(sunAngle)));
   const skyLight = 0.24 + dayFactor * 0.76;
 
-  light.fill(0.06);
-
-  if (!lightQueueScratch || lightQueueScratch.length < total * 2) {
-    lightQueueScratch = new Int32Array(total * 2);
+  const regionCells = (x1 - x0 + 1) * (y1 - y0 + 1);
+  if (!lightQueueScratch || lightQueueScratch.length < regionCells * 2) {
+    lightQueueScratch = new Int32Array(Math.max(regionCells * 2, 65536));
   }
   const queue = lightQueueScratch;
   let tail = 0;
@@ -687,10 +1138,20 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
     }
   };
 
-  for (let x = 0; x < width; x++) {
+  for (let x = x0; x <= x1; x++) {
+    // Check whether sky is already blocked above y0
     let blocked = false;
-    for (let y = 0; y < height; y++) {
+    for (let y = 0; y < y0; y++) {
+      const t = tiles[y * width + x] as TileType;
+      if (isTileSolid(t) && t !== TileType.Glass) {
+        blocked = true;
+        break;
+      }
+    }
+
+    for (let y = y0; y <= y1; y++) {
       const idx = y * width + x;
+      light[idx] = 0.06;
       const tile = tiles[idx] as TileType;
       const wall = walls[idx] as WallType;
 
@@ -700,16 +1161,24 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
         tile === TileType.Furnace ||
         tile === TileType.RubyOre ||
         tile === TileType.CrystalBlock ||
-        tile === TileType.LifeCrystal
+        tile === TileType.LifeCrystal ||
+        tile === TileType.Campfire ||
+        tile === TileType.HeartLantern ||
+        tile === TileType.CrimsonAltar ||
+        tile === TileType.HellstoneOre
       ) {
         const emit =
-          tile === TileType.Torch || tile === TileType.Chandelier
+          tile === TileType.Torch ||
+          tile === TileType.Chandelier ||
+          tile === TileType.Campfire
             ? 1.0
-            : tile === TileType.Furnace
-              ? 0.85
-              : tile === TileType.CrystalBlock || tile === TileType.LifeCrystal
+            : tile === TileType.Furnace || tile === TileType.HeartLantern
+              ? 0.88
+              : tile === TileType.CrystalBlock ||
+                  tile === TileType.LifeCrystal ||
+                  tile === TileType.CrimsonAltar
                 ? 0.74
-                : 0.45;
+                : 0.55;
         if (emit > light[idx]) {
           light[idx] = emit;
           enqueue(idx);
@@ -723,15 +1192,14 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
           enqueue(idx);
         } else if (wall === WallType.None) {
           light[idx] = Math.max(light[idx], skyLight);
-          // Only enqueue sky tiles adjacent to dark/walled/solid neighbors
           const hasRightEdge =
-            x + 1 < width &&
+            x + 1 <= x1 &&
             (walls[idx + 1] !== WallType.None || isTileSolid(tiles[idx + 1] as TileType));
           const hasLeftEdge =
-            x - 1 >= 0 &&
+            x - 1 >= x0 &&
             (walls[idx - 1] !== WallType.None || isTileSolid(tiles[idx - 1] as TileType));
           const hasBottomEdge =
-            y + 1 < height &&
+            y + 1 <= y1 &&
             (walls[idx + width] !== WallType.None || isTileSolid(tiles[idx + width] as TileType));
           if (hasRightEdge || hasLeftEdge || hasBottomEdge) {
             enqueue(idx);
@@ -753,8 +1221,7 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
     const cx = idx % width;
     const cy = (idx - cx) / width;
 
-    // Right
-    if (cx + 1 < width) {
+    if (cx + 1 <= x1) {
       const nIdx = idx + 1;
       const nTile = tiles[nIdx] as TileType;
       const nextLight = curLight - (isTileSolid(nTile) && nTile !== TileType.Glass ? 0.14 : 0.09);
@@ -763,8 +1230,7 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
         enqueue(nIdx);
       }
     }
-    // Left
-    if (cx - 1 >= 0) {
+    if (cx - 1 >= x0) {
       const nIdx = idx - 1;
       const nTile = tiles[nIdx] as TileType;
       const nextLight = curLight - (isTileSolid(nTile) && nTile !== TileType.Glass ? 0.14 : 0.09);
@@ -773,8 +1239,7 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
         enqueue(nIdx);
       }
     }
-    // Down
-    if (cy + 1 < height) {
+    if (cy + 1 <= y1) {
       const nIdx = idx + width;
       const nTile = tiles[nIdx] as TileType;
       const nextLight = curLight - (isTileSolid(nTile) && nTile !== TileType.Glass ? 0.14 : 0.09);
@@ -783,8 +1248,7 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
         enqueue(nIdx);
       }
     }
-    // Up
-    if (cy - 1 >= 0) {
+    if (cy - 1 >= y0) {
       const nIdx = idx - width;
       const nTile = tiles[nIdx] as TileType;
       const nextLight = curLight - (isTileSolid(nTile) && nTile !== TileType.Glass ? 0.14 : 0.09);
@@ -794,6 +1258,28 @@ export function recomputeLighting(world: WorldData, timeOfDay: number): void {
       }
     }
   }
+}
+
+export function recomputeLightingLocal(
+  world: WorldData,
+  timeOfDay: number,
+  centerTx: number,
+  centerTy: number,
+  halfW = 105,
+  halfH = 72,
+): void {
+  recomputeLightingRegion(
+    world,
+    timeOfDay,
+    centerTx - halfW,
+    centerTx + halfW,
+    centerTy - halfH,
+    centerTy + halfH,
+  );
+}
+
+export function recomputeLighting(world: WorldData, timeOfDay: number): void {
+  recomputeLightingRegion(world, timeOfDay, 0, world.width - 1, 0, world.height - 1);
 }
 
 export function getNearbyStations(
@@ -819,6 +1305,7 @@ export function inspectRoomHousing(
   world: WorldData,
   startX: number,
   startY: number,
+  lang: Language = 'en',
 ): { report: HousingRoomReport; visitedKeys: number[]; floorY: number } {
   const emptyReport = (reasons: string[]): HousingRoomReport => ({
     valid: false,
@@ -835,17 +1322,29 @@ export function inspectRoomHousing(
   });
 
   if (!inBounds(startX, startY, world)) {
-    return { report: emptyReport(['Вне границ мира']), visitedKeys: [], floorY: startY };
+    return {
+      report: emptyReport([lang === 'ru' ? 'Вне границ мира' : 'Outside world bounds']),
+      visitedKeys: [],
+      floorY: startY,
+    };
   }
 
   const startTile = getTile(world, startX, startY);
   if (isTileSolid(startTile) || startTile === TileType.DoorClosed) {
-    return { report: emptyReport(['Внутри блока']), visitedKeys: [], floorY: startY };
+    return {
+      report: emptyReport([lang === 'ru' ? 'Внутри блока' : 'Inside a solid block']),
+      visitedKeys: [],
+      floorY: startY,
+    };
   }
 
   if (getWall(world, startX, startY) === WallType.None && startTile !== TileType.DoorOpen) {
     return {
-      report: emptyReport(['Поставь задние стены (дерево/кирпич), чтобы закрыть комнату']),
+      report: emptyReport([
+        lang === 'ru'
+          ? 'Поставь задние стены (дерево/кирпич), чтобы закрыть комнату'
+          : 'Place background walls (wood/brick/sandstone) to enclose the room',
+      ]),
       visitedKeys: [],
       floorY: startY,
     };
@@ -899,7 +1398,9 @@ export function inspectRoomHousing(
       tile === TileType.Torch ||
       tile === TileType.Chandelier ||
       tile === TileType.Furnace ||
-      tile === TileType.CrystalBlock
+      tile === TileType.CrystalBlock ||
+      tile === TileType.Campfire ||
+      tile === TileType.HeartLantern
     ) {
       hasLight = true;
     }
@@ -939,13 +1440,17 @@ export function inspectRoomHousing(
   const enclosed = !hasWallGap && !tooLarge && interiorCount >= 6;
 
   const reasons: string[] = [];
-  if (hasWallGap) reasons.push('Закройте задние стены и периметр');
-  else if (tooLarge) reasons.push('Комната не замкнута или слишком огромная');
-  else if (interiorCount < 6) reasons.push('Сделайте комнату просторнее (от 6 клеток)');
-  if (!hasLight) reasons.push('Поставьте факел или люстру');
-  if (!hasDoor) reasons.push('Добавьте дверь или платформу');
-  if (!hasTable) reasons.push('Поставьте стол или верстак');
-  if (!hasSeat) reasons.push('Поставьте стул, табуретку или кровать');
+  if (hasWallGap) {
+    reasons.push(lang === 'ru' ? 'Закройте задние стены и периметр' : 'Close all walls & background gaps');
+  } else if (tooLarge) {
+    reasons.push(lang === 'ru' ? 'Комната не замкнута или слишком огромная' : 'Room is unenclosed or too large');
+  } else if (interiorCount < 6) {
+    reasons.push(lang === 'ru' ? 'Сделайте комнату просторнее (от 6 клеток)' : 'Make room larger (at least 6 tiles)');
+  }
+  if (!hasLight) reasons.push(lang === 'ru' ? 'Поставьте факел или люстру' : 'Add a Torch or Chandelier');
+  if (!hasDoor) reasons.push(lang === 'ru' ? 'Добавьте дверь или платформу' : 'Add a Door or Platform');
+  if (!hasTable) reasons.push(lang === 'ru' ? 'Поставьте стол или верстак' : 'Place a Table or Workbench');
+  if (!hasSeat) reasons.push(lang === 'ru' ? 'Поставьте стул, табуретку или кровать' : 'Place a Chair, Stool, or Bed');
 
   const centerTileX = interiorCount > 0 ? Math.round(sumX / interiorCount) : startX;
   const centerTileY = interiorCount > 0 ? Math.round(sumY / interiorCount) : startY;
@@ -1028,13 +1533,19 @@ export function buildQuickHouseAt(
   world: WorldData,
   anchorX: number,
   floorY: number,
+  lang: Language = 'en',
 ): { built: boolean; reason?: string; centerTileX: number; centerTileY: number } {
   const left = anchorX - 4;
   const right = anchorX + 4;
   const top = floorY - 5;
 
   if (left < 2 || right >= world.width - 2 || top < 2 || floorY >= world.height - 2) {
-    return { built: false, reason: 'Слишком близко к краю мира', centerTileX: anchorX, centerTileY: floorY - 2 };
+    return {
+      built: false,
+      reason: lang === 'ru' ? 'Слишком близко к краю мира' : 'Too close to the world border',
+      centerTileX: anchorX,
+      centerTileY: floorY - 2,
+    };
   }
 
   for (let x = left; x <= right; x++) {
@@ -1043,7 +1554,10 @@ export function buildQuickHouseAt(
       if (t === TileType.Chest || t === TileType.Stool || t === TileType.LifeCrystal) {
         return {
           built: false,
-          reason: 'Освободи место (рядом сундук, табуретка или кристалл)',
+          reason:
+            lang === 'ru'
+              ? 'Освободи место (рядом сундук, табуретка или кристалл)'
+              : 'Clear space first (Chest, Stool, or Life Crystal nearby)',
           centerTileX: anchorX,
           centerTileY: floorY - 2,
         };
@@ -1084,3 +1598,4 @@ export function buildQuickHouseAt(
 
   return { built: true, centerTileX: anchorX, centerTileY: floorY - 2 };
 }
+

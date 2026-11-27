@@ -1,6 +1,5 @@
 import { sound } from './audio';
 import {
-  DEBUG_CHEST_PRESETS,
   ITEMS,
   RECIPES,
   STOOL_REPO_URL,
@@ -12,19 +11,41 @@ import {
   createStarterInventory,
   dropFromSlot,
   equipItemFromInventory,
+  getChestPresetInfo,
+  getItemName,
   giveDebugItem as applyGiveDebugItem,
   unequipItemToInventory,
 } from './catalog';
-import { getNpcDialogue, getNpcShopItems, stepNpcAI, syncVillageNpcs } from './npc';
+import {
+  STATUS_EFFECT_DEFS,
+  applyStatusEffect,
+  clearAllDebuffs,
+  computeEffectModifiers,
+  getEffectDescription,
+  getEffectName,
+  rollRedPotion,
+  stepActiveEffects,
+} from './effects';
+import { tr } from './i18n';
+import { getNpcDialogue, getNpcDisplay, getNpcShopItems, stepNpcAI, syncVillageNpcs } from './npc';
+import {
+  deserializeWorldData,
+  loadWorldFromStorage,
+  saveWorldToStorage,
+  serializeWorldSnapshot,
+} from './saves';
 import {
   GRAVITY,
   InputIntent,
   MAX_WING_FUEL,
+  PILLAR_KINDS,
   computeDamageAfterDefense,
   createEnemy,
   createInitialPlayer,
   explodeTilesRadius,
+  getEnemyName,
   isBossKind,
+  isPillarKind,
   moveEntityWithTiles,
   placeDebugChestNearPlayer,
   rectsOverlap,
@@ -48,8 +69,10 @@ import {
   FloatingText,
   GamePhase,
   GameSettings,
+  HudBossBar,
   HudSnapshot,
   InventorySlot,
+  Language,
   NpcEntity,
   Particle,
   PlayerState,
@@ -61,18 +84,18 @@ import {
   WorldVariant,
 } from './types';
 import {
-  BIOME_NAMES,
-  WORLD_VARIANTS,
   buildQuickHouseAt,
-  findValidNpcHouses,
   generateWorld,
   getBiomeAtX,
+  getBiomeName,
   getNearbyStations,
   getTile,
+  getWorldVariantInfo,
   inspectRoomHousing,
   isInsideValidHouse,
   isTileSolid,
   recomputeLighting,
+  recomputeLightingLocal,
   setTile,
   tileIndex,
 } from './worldGen';
@@ -122,6 +145,9 @@ export class KotarriaEngine {
   private houseCheckTimer = 0;
   private houseRegenTimer = 0;
   private regenAccessoryTimer = 0;
+  private effectRegenTimer = 0;
+  private effectDotTimer = 0;
+  private autoSaveTimer = 25;
   private npcSyncTimer = 0.6;
   private starFallTimer = 11;
   private validHouseCount = 0;
@@ -129,6 +155,10 @@ export class KotarriaEngine {
   private toastMessage: string | null = null;
   private toastTimer = 0;
   private bossSpawnedDay = 0;
+  private lastWasNight = false;
+  public activeSaveId: string | null = null;
+  public lunarEvent = { active: false, moonLordSpawned: false };
+  public alienInvasion = { active: false, defeated: 0, target: 24, saucerSpawned: false };
   public godMode = false;
   public uiModalOpen = false;
   public settings: GameSettings = { ...DEFAULT_SETTINGS };
@@ -149,6 +179,8 @@ export class KotarriaEngine {
   private jumpJustPressed = false;
   private mouseLeftDown = false;
   private mouseRightDown = false;
+  private mouseLeftQueued = false;
+  private mouseRightQueued = false;
   private mouseScreenX = 600;
   private mouseScreenY = 360;
   private attackCooldown = 0;
@@ -198,7 +230,7 @@ export class KotarriaEngine {
     this.equipment = createInitialEquipment();
     this.syncActiveWeapon();
 
-    // Seed 2 starter slimes a bit off to the sides and Guide Максим near spawn
+    // Seed 2 starter slimes a bit off to the sides and Guide near spawn
     this.spawnStarterCreatures();
     const sync = syncVillageNpcs(
       this.npcs,
@@ -206,8 +238,18 @@ export class KotarriaEngine {
       () => this.nextEntityId++,
       this.player,
       this.stats.bossDefeated,
+      false,
+      this.lang,
     );
     this.validHouseCount = sync.validHouseCount;
+  }
+
+  private get lang(): Language {
+    return this.settings.language;
+  }
+
+  private t(en: string, ru: string): string {
+    return tr(this.lang, en, ru);
   }
 
   private spawnStarterCreatures(): void {
@@ -262,8 +304,19 @@ export class KotarriaEngine {
   }
 
   public applySettings(next: GameSettings): void {
+    const langChanged = this.settings.language !== next.language;
     this.settings = { ...next };
     saveSettings(this.settings);
+    if (langChanged) {
+      for (const npc of this.npcs) {
+        const disp = getNpcDisplay(npc.kind, this.lang);
+        npc.name = disp.name;
+        npc.title = disp.title;
+      }
+      for (const enemy of this.enemies) {
+        enemy.name = getEnemyName(enemy, this.lang);
+      }
+    }
     sound.applySettings({
       musicEnabled: this.settings.musicEnabled,
       musicVolume: this.settings.musicVolume,
@@ -279,6 +332,7 @@ export class KotarriaEngine {
     } else if (this.phase === 'playing') {
       this.ensureLoopRunning();
     }
+    this.emitHud(true);
   }
 
   private syncMusicTheme(): void {
@@ -382,6 +436,11 @@ export class KotarriaEngine {
     this.dayCount = 1;
     this.timeOfDay = 0.22;
     this.bossSpawnedDay = 0;
+    this.lastWasNight = false;
+    this.activeSaveId = null;
+    this.autoSaveTimer = 25;
+    this.lunarEvent = { active: false, moonLordSpawned: false };
+    this.alienInvasion = { active: false, defeated: 0, target: 24, saucerSpawned: false };
     this.godMode = false;
     this.uiModalOpen = false;
     this.activeChestCoords = null;
@@ -405,10 +464,17 @@ export class KotarriaEngine {
       () => this.nextEntityId++,
       this.player,
       false,
+      false,
+      this.lang,
     );
     this.validHouseCount = sync.validHouseCount;
-    const variantMeta = WORLD_VARIANTS[this.worldVariant];
-    this.showToast(`Мир «${variantMeta.title}» создан! Рядом Гид Максим и табуретка.`);
+    const variantMeta = getWorldVariantInfo(this.worldVariant, this.lang);
+    this.showToast(
+      this.t(
+        `World "${variantMeta.title}" created! Guide Max & the Stool await nearby.`,
+        `Мир «${variantMeta.title}» создан! Рядом Гид Максим и табуретка.`,
+      ),
+    );
     this.setPhase('playing');
   }
 
@@ -416,11 +482,131 @@ export class KotarriaEngine {
     this.startNewGame(variant);
   }
 
+  public saveCurrentWorld(slotId?: string, silent = false): { ok: boolean; saveId: string | null } {
+    const id = slotId ?? this.activeSaveId ?? `world_${Date.now().toString(36)}`;
+    const pxTile = Math.max(
+      0,
+      Math.min(this.world.width - 1, Math.floor((this.player.x + this.player.width / 2) / TILE_SIZE)),
+    );
+    const biome = getBiomeAtX(pxTile, this.world.width);
+    const variantTitle = getWorldVariantInfo(this.worldVariant, this.lang).title;
+    const snapshot = serializeWorldSnapshot({
+      id,
+      name: `${variantTitle} · ${this.t('Day', 'День')} ${this.dayCount}`,
+      biome,
+      world: this.world,
+      player: this.player,
+      hotbar: this.hotbar,
+      backpack: this.backpack,
+      equipment: this.equipment,
+      selectedSlot: this.selectedSlot,
+      activeToolMode: this.activeToolMode,
+      dayCount: this.dayCount,
+      timeOfDay: this.timeOfDay,
+      bossSpawnedDay: this.bossSpawnedDay,
+      lastWasNight: this.lastWasNight,
+      lunarEvent: this.lunarEvent,
+      alienInvasion: this.alienInvasion,
+      godMode: this.godMode,
+      stoolPetted: this.stoolPetted,
+      stats: this.stats,
+      npcs: this.npcs,
+    });
+    const ok = saveWorldToStorage(snapshot);
+    if (ok) {
+      this.activeSaveId = id;
+      if (!silent) {
+        sound.playCraft();
+        this.showToast(this.t('World & progress saved!', 'Мир и прогресс сохранены!'));
+      }
+      this.emitHud(true);
+    } else if (!silent) {
+      this.showToast(this.t('Could not save world (storage full).', 'Не удалось сохранить мир.'));
+    }
+    return { ok, saveId: ok ? id : null };
+  }
+
+  public loadSavedWorld(saveId: string): boolean {
+    const data = loadWorldFromStorage(saveId);
+    if (!data) {
+      this.showToast(this.t('Save file not found.', 'Сохранение не найдено.'));
+      return false;
+    }
+    sound.unlock();
+    this.worldVariant = data.world.variant ?? data.meta?.variant ?? 'crimson_classic';
+    this.world = deserializeWorldData(data);
+    this.player = {
+      ...createInitialPlayer(this.world),
+      ...data.player,
+      effects: Array.isArray(data.player.effects) ? data.player.effects.map((e) => ({ ...e })) : [],
+      grapple: { active: false, hooked: false, x: 0, y: 0, vx: 0, vy: 0 },
+    };
+    this.hotbar = data.hotbar.map((s) => (s ? { ...s } : null));
+    this.backpack = data.backpack.map((s) => (s ? { ...s } : null));
+    this.equipment = {
+      helmet: data.equipment?.helmet ? { ...data.equipment.helmet } : null,
+      chestplate: data.equipment?.chestplate ? { ...data.equipment.chestplate } : null,
+      greaves: data.equipment?.greaves ? { ...data.equipment.greaves } : null,
+      accessories: Array.isArray(data.equipment?.accessories)
+        ? data.equipment.accessories.map((a) => (a ? { ...a } : null))
+        : [null, null, null, null, null],
+    };
+    this.selectedSlot = Math.max(0, Math.min(8, data.selectedSlot ?? 0));
+    this.activeToolMode = data.activeToolMode ?? 'auto';
+    this.dayCount = data.dayCount ?? 1;
+    this.timeOfDay = data.timeOfDay ?? 0.22;
+    this.bossSpawnedDay = data.bossSpawnedDay ?? 0;
+    this.lastWasNight = Boolean(data.lastWasNight);
+    this.godMode = Boolean(data.godMode);
+    this.stats = { ...data.stats };
+    this.stoolPetted = Boolean(data.stoolPetted);
+    this.lunarEvent = data.lunarEvent ? { ...data.lunarEvent } : { active: false, moonLordSpawned: false };
+    this.alienInvasion = data.alienInvasion
+      ? { ...data.alienInvasion }
+      : { active: false, defeated: 0, target: 24, saucerSpawned: false };
+    this.enemies = [];
+    this.projectiles = [];
+    this.drops = [];
+    this.floatingTexts = [];
+    this.tileDamageMap.clear();
+    this.npcs = Array.isArray(data.npcs)
+      ? data.npcs.map((n) => ({
+          ...n,
+          speechText: null,
+          speechTimer: 0,
+        }))
+      : [];
+    const sync = syncVillageNpcs(
+      this.npcs,
+      this.world,
+      () => this.nextEntityId++,
+      this.player,
+      this.stats.bossDefeated,
+      false,
+      this.lang,
+    );
+    this.validHouseCount = sync.validHouseCount;
+    this.activeSaveId = saveId;
+    this.autoSaveTimer = 25;
+    this.uiModalOpen = false;
+    this.activeChestCoords = null;
+    this.activeNpcId = null;
+    this.syncActiveWeapon();
+    recomputeLighting(this.world, this.timeOfDay);
+    this.showToast(
+      this.t(`Loaded Day ${this.dayCount} world!`, `Мир загружен (День ${this.dayCount})!`),
+    );
+    this.setPhase('playing');
+    return true;
+  }
+
   public clearInputs(): void {
     this.keys.clear();
     this.jumpJustPressed = false;
     this.mouseLeftDown = false;
     this.mouseRightDown = false;
+    this.mouseLeftQueued = false;
+    this.mouseRightQueued = false;
   }
 
   public handleKeyDown(code: string): void {
@@ -463,8 +649,14 @@ export class KotarriaEngine {
   public handleMouseDown(button: number, clientX: number, clientY: number): void {
     sound.unlock();
     this.handleMouseMove(clientX, clientY);
-    if (button === 0) this.mouseLeftDown = true;
-    if (button === 2) this.mouseRightDown = true;
+    if (button === 0) {
+      this.mouseLeftDown = true;
+      this.mouseLeftQueued = true;
+    }
+    if (button === 2) {
+      this.mouseRightDown = true;
+      this.mouseRightQueued = true;
+    }
   }
 
   public handleMouseUp(button: number): void {
@@ -483,8 +675,8 @@ export class KotarriaEngine {
     this.activeToolMode = this.activeToolMode === 'auto' ? 'build' : 'auto';
     this.showToast(
       this.activeToolMode === 'build'
-        ? 'Режим стройки: ЛКМ ставит блоки'
-        : 'Обычный режим: ЛКМ атака/копка, ПКМ стройка',
+        ? this.t('Build mode: LMB places blocks', 'Режим стройки: ЛКМ ставит блоки')
+        : this.t('Combat/Mine mode: LMB attack/mine, RMB place', 'Обычный режим: ЛКМ атака/копка, ПКМ стройка'),
     );
     this.emitHud();
   }
@@ -531,9 +723,9 @@ export class KotarriaEngine {
       noAutoMagnet: true,
     });
 
-    const def = ITEMS[dropped.itemId];
-    const label = `${def?.name ?? dropped.itemId}${dropped.droppedCount > 1 ? ` ×${dropped.droppedCount}` : ''}`;
-    this.spawnFloatingText(pcx, this.player.y - 10, `Выброшено: ${label}`, '#fde68a');
+    const name = getItemName(dropped.itemId, this.lang);
+    const label = `${name}${dropped.droppedCount > 1 ? ` ×${dropped.droppedCount}` : ''}`;
+    this.spawnFloatingText(pcx, this.player.y - 10, this.t(`Dropped: ${label}`, `Выброшено: ${label}`), '#fde68a');
     sound.playDrop();
     this.syncActiveWeapon();
     this.emitHud(true);
@@ -559,6 +751,7 @@ export class KotarriaEngine {
       fromArea,
       fromIndex,
       targetSlotKey,
+      this.lang,
     );
     if (!res.equipped) {
       if (res.reason) this.showToast(res.reason);
@@ -579,7 +772,7 @@ export class KotarriaEngine {
   public unequipEquipmentSlot(slotKey: EquipSlotKey): boolean {
     const ok = unequipItemToInventory(this.hotbar, this.backpack, this.equipment, slotKey);
     if (!ok) {
-      this.showToast('Нет места в рюкзаке, чтобы снять экипировку!');
+      this.showToast(this.t('Backpack is full — cannot unequip!', 'Нет места в рюкзаке, чтобы снять экипировку!'));
       this.emitHud(true);
       return false;
     }
@@ -606,8 +799,8 @@ export class KotarriaEngine {
     if (ok) {
       this.stats.itemsCrafted++;
       sound.playCraft();
-      const item = ITEMS[recipe.resultId];
-      this.showToast(`Скрафчено: ${item?.name ?? recipe.resultId} ×${recipe.resultCount}`);
+      const name = getItemName(recipe.resultId, this.lang);
+      this.showToast(this.t(`Crafted: ${name} ×${recipe.resultCount}`, `Скрафчено: ${name} ×${recipe.resultCount}`));
       this.syncActiveWeapon();
       this.emitHud();
     }
@@ -634,9 +827,9 @@ export class KotarriaEngine {
         aimTy !== undefined
           ? Math.max(8, Math.min(this.world.height - 3, aimTy))
           : Math.max(8, Math.min(this.world.height - 3, feetY));
-      const res = buildQuickHouseAt(this.world, anchorX, floorY);
+      const res = buildQuickHouseAt(this.world, anchorX, floorY, this.lang);
       if (!res.built) {
-        this.showToast(res.reason ?? 'Здесь нельзя построить дом!');
+        this.showToast(res.reason ?? this.t('Cannot build a house here!', 'Здесь нельзя построить дом!'));
         return false;
       }
       slot.count--;
@@ -644,7 +837,7 @@ export class KotarriaEngine {
         this.hotbar[this.selectedSlot] = null;
       }
       this.stats.blocksPlaced += 16;
-      recomputeLighting(this.world, this.timeOfDay);
+      recomputeLightingLocal(this.world, this.timeOfDay, res.centerTileX, res.centerTileY);
       sound.playCraft();
       sound.playPlace();
       this.spawnBurst(res.centerTileX * TILE_SIZE, res.centerTileY * TILE_SIZE, '#fde047', 18, 170);
@@ -654,12 +847,20 @@ export class KotarriaEngine {
         () => this.nextEntityId++,
         this.player,
         this.stats.bossDefeated,
+        false,
+        this.lang,
       );
       this.validHouseCount = sync.validHouseCount;
       this.showToast(
         sync.spawnedNames.length > 0
-          ? `Дом построен! Заселился житель: ${sync.spawnedNames[0]}!`
-          : 'Уютный дом построен! (Домов: ' + this.validHouseCount + ')',
+          ? this.t(
+              `House built! ${sync.spawnedNames[0]} moved in!`,
+              `Дом построен! Заселился житель: ${sync.spawnedNames[0]}!`,
+            )
+          : this.t(
+              `Cozy house built! (Houses: ${this.validHouseCount})`,
+              `Уютный дом построен! (Домов: ${this.validHouseCount})`,
+            ),
       );
       this.syncActiveWeapon();
       this.emitHud(true);
@@ -677,29 +878,93 @@ export class KotarriaEngine {
         18,
         170,
       );
-      this.showToast('Волшебное зеркало перенесло кота домой!');
+      this.showToast(this.t('Magic Mirror teleported you home!', 'Волшебное зеркало перенесло кота домой!'));
       this.emitHud(true);
       return true;
     }
 
-    if (def.specialKind === 'life_crystal') {
+    if (def.specialKind === 'recall_potion') {
+      this.spawnBurst(pcx, pcy, '#38bdf8', 16, 160);
+      this.teleportToSpawn();
+      sound.playMirror();
+      this.spawnBurst(
+        this.player.x + this.player.width / 2,
+        this.player.y + this.player.height / 2,
+        '#bae6fd',
+        16,
+        160,
+      );
+      this.showToast(this.t('Recall Potion warped you home!', 'Зелье возврата перенесло кота домой!'));
+    } else if (def.specialKind === 'red_potion') {
+      const roll = rollRedPotion(this.player.effects);
+      const names = roll.appliedEffects.map((id) => getEffectName(id, this.lang)).join(', ');
+      if (roll.outcome === 'good') {
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + roll.healAmount);
+        this.spawnFloatingText(pcx, this.player.y - 14, this.t('LUCKY! +60 HP', 'УДАЧА! +60 HP'), '#4ade80');
+        this.spawnBurst(pcx, pcy, '#fde047', 22, 190);
+        sound.playStar();
+        this.showToast(
+          this.t(`Red Potion (50/50) GOOD: ${names}!`, `Красное зелье (50/50) ПОВЕЗЛО: ${names}!`),
+        );
+      } else {
+        this.spawnFloatingText(pcx, this.player.y - 14, this.t('CURSED!', 'ПРОКЛЯТИЕ!'), '#ef4444');
+        this.spawnBurst(pcx, pcy, '#b91c1c', 22, 190);
+        sound.playPlayerHurt();
+        this.showToast(
+          this.t(`Red Potion (50/50) BAD: ${names}!`, `Красное зелье (50/50) НЕ ПОВЕЗЛО: ${names}!`),
+        );
+      }
+    } else if (def.specialKind === 'milk_potion') {
+      const cleanse = clearAllDebuffs(this.player.effects);
+      this.player.effects = cleanse.remaining;
+      const cleared = cleanse.removedCount;
+      if (def.healAmount) {
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + def.healAmount);
+      }
+      this.spawnFloatingText(
+        pcx,
+        this.player.y - 12,
+        cleared > 0 ? this.t('CLEANSED!', 'ОЧИЩЕНО!') : `+${def.healAmount ?? 15} HP`,
+        '#bae6fd',
+      );
+      this.spawnBurst(pcx, pcy, '#f8fafc', 16, 150);
+      sound.playHeal();
+      this.showToast(
+        cleared > 0
+          ? this.t(
+              `Milk Potion removed ${cleared} debuff(s)!`,
+              `Зелье молока сняло плохие эффекты (${cleared})!`,
+            )
+          : this.t('Milk Potion refreshed you! +15 HP', 'Зелье молока освежило кота! +15 HP'),
+      );
+    } else if (def.specialKind === 'buff_potion' && def.grantsEffects) {
+      const names: string[] = [];
+      for (const ge of def.grantsEffects) {
+        applyStatusEffect(this.player.effects, ge.id, ge.duration);
+        names.push(getEffectName(ge.id, this.lang));
+      }
+      this.spawnFloatingText(pcx, this.player.y - 12, names[0] ?? 'BUFF!', def.accent);
+      this.spawnBurst(pcx, pcy, def.color, 14, 150);
+      sound.playHeal();
+      this.showToast(this.t(`Effect active: ${names.join(', ')}`, `Эффект: ${names.join(', ')}`));
+    } else if (def.specialKind === 'life_crystal') {
       if (this.player.maxHp >= 400) {
-        this.showToast('Максимум HP (400) уже достигнут!');
+        this.showToast(this.t('Max HP (400) already reached!', 'Максимум HP (400) уже достигнут!'));
         return false;
       }
       this.player.maxHp = Math.min(400, this.player.maxHp + 20);
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + 40);
-      this.spawnFloatingText(pcx, this.player.y - 12, '+20 Макс. HP!', '#f472b6');
+      this.spawnFloatingText(pcx, this.player.y - 12, this.t('+20 Max HP!', '+20 Макс. HP!'), '#f472b6');
       this.spawnBurst(pcx, pcy, '#ec4899', 16, 160);
       sound.playStar();
     } else if (def.specialKind === 'mana_crystal') {
       if (this.player.maxMana >= 200) {
-        this.showToast('Максимум маны (200) уже достигнут!');
+        this.showToast(this.t('Max Mana (200) already reached!', 'Максимум маны (200) уже достигнут!'));
         return false;
       }
       this.player.maxMana = Math.min(200, this.player.maxMana + 20);
       this.player.mana = Math.min(this.player.maxMana, this.player.mana + 40);
-      this.spawnFloatingText(pcx, this.player.y - 12, '+20 Макс. Мана!', '#60a5fa');
+      this.spawnFloatingText(pcx, this.player.y - 12, this.t('+20 Max Mana!', '+20 Макс. Мана!'), '#60a5fa');
       this.spawnBurst(pcx, pcy, '#3b82f6', 16, 160);
       sound.playStar();
     } else {
@@ -712,7 +977,7 @@ export class KotarriaEngine {
       }
       if (def.defenseBonus) {
         this.player.defense = Math.min(20, this.player.defense + def.defenseBonus);
-        this.showToast(`Защита кота выросла до ${this.player.defense}!`);
+        this.showToast(this.t(`Defense increased to ${this.player.defense}!`, `Защита кота выросла до ${this.player.defense}!`));
       }
       sound.playHeal();
     }
@@ -729,12 +994,6 @@ export class KotarriaEngine {
   public summonBoss(kind: EnemyKind, consumeSelectedSlot = false): boolean {
     if (this.phase !== 'playing') return false;
     if (!isBossKind(kind)) return false;
-
-    const existing = this.enemies.find((e) => e.kind === kind && e.aiState !== 'ko');
-    if (existing) {
-      this.showToast(`${existing.name} уже на арене!`);
-      return false;
-    }
 
     if (consumeSelectedSlot) {
       const slot = this.hotbar[this.selectedSlot];
@@ -760,11 +1019,90 @@ export class KotarriaEngine {
       this.player.x + 250 * this.player.facing,
       this.player.y + spawnOffsetY,
       1 + (this.dayCount - 1) * 0.15,
+      this.lang,
     );
     this.enemies.push(boss);
     sound.playBossRoar();
     this.trauma = Math.min(1, this.trauma + 0.5);
-    this.showToast(`${boss.name} пробудился!`);
+    this.showToast(
+      this.t(`${getEnemyName(boss, 'en')} has awoken!`, `${getEnemyName(boss, 'ru')} пробудился!`),
+    );
+    this.syncMusicTheme();
+    this.emitHud(true);
+    return true;
+  }
+
+  public spawnCelestialPillars(consumeSelectedSlot = false): boolean {
+    if (this.phase !== 'playing') return false;
+    if (consumeSelectedSlot) {
+      const slot = this.hotbar[this.selectedSlot];
+      if (!slot || slot.count <= 0) return false;
+      slot.count--;
+      if (slot.count <= 0) {
+        this.hotbar[this.selectedSlot] = null;
+        this.syncActiveWeapon();
+      }
+    }
+
+    const offsets = [-360, -160, 160, 360];
+    for (let i = 0; i < PILLAR_KINDS.length; i++) {
+      const kind = PILLAR_KINDS[i];
+      const wx = Math.max(
+        8 * TILE_SIZE,
+        Math.min((this.world.width - 8) * TILE_SIZE, this.player.x + offsets[i]),
+      );
+      const tx = Math.floor(wx / TILE_SIZE);
+      const wy = Math.max(6, this.world.surfaceHeights[tx] - 6) * TILE_SIZE;
+      const pillar = createEnemy(this.nextEntityId++, kind, wx, wy, 1, this.lang);
+      this.enemies.push(pillar);
+      this.spawnBurst(wx + 32, wy + 52, '#38bdf8', 14, 180);
+    }
+
+    this.lunarEvent = { active: true, moonLordSpawned: false };
+    sound.playBossRoar();
+    this.trauma = Math.min(1, this.trauma + 0.55);
+    this.showToast(
+      this.t(
+        'The 4 Celestial Pillars have descended! Defeat their minions to drop the shields!',
+        '4 Небесные Башни спустились! Бейте миньонов вокруг них, чтобы снять щиты!',
+      ),
+    );
+    this.syncMusicTheme();
+    this.emitHud(true);
+    return true;
+  }
+
+  public startAlienInvasion(consumeSelectedSlot = false): boolean {
+    if (this.phase !== 'playing') return false;
+    if (consumeSelectedSlot) {
+      const slot = this.hotbar[this.selectedSlot];
+      if (!slot || slot.count <= 0) return false;
+      slot.count--;
+      if (slot.count <= 0) {
+        this.hotbar[this.selectedSlot] = null;
+        this.syncActiveWeapon();
+      }
+    }
+
+    this.alienInvasion = { active: true, defeated: 0, target: 24, saucerSpawned: false };
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      const wx = Math.max(
+        6 * TILE_SIZE,
+        Math.min((this.world.width - 6) * TILE_SIZE, this.player.x + side * 240),
+      );
+      const kind: EnemyKind = i === 0 ? 'alien_cat' : 'alien_drone';
+      this.enemies.push(
+        createEnemy(this.nextEntityId++, kind, wx, this.player.y - 120, 1, this.lang),
+      );
+    }
+    sound.playBossRoar();
+    this.showToast(
+      this.t(
+        'Alien Invasion! Green Martian Cats and UFO Drones are invading!',
+        'Нашествие инопланетян! Зелёные марсианские коты и НЛО атакуют!',
+      ),
+    );
     this.syncMusicTheme();
     this.emitHud(true);
     return true;
@@ -833,14 +1171,14 @@ export class KotarriaEngine {
     const taken = slot.count - leftover;
     if (taken > 0) {
       sound.playPickup();
-      const def = ITEMS[slot.itemId];
-      this.showToast(`Взято из сундука: ${def?.name ?? slot.itemId} ×${taken}`);
+      const name = getItemName(slot.itemId, this.lang);
+      this.showToast(this.t(`Took from chest: ${name} ×${taken}`, `Взято из сундука: ${name} ×${taken}`));
     }
     if (leftover <= 0) {
       items.splice(itemIdx, 1);
     } else {
       slot.count = leftover;
-      this.showToast('Инвентарь полон!');
+      this.showToast(this.t('Inventory is full!', 'Инвентарь полон!'));
     }
     this.syncActiveWeapon();
     this.emitHud(true);
@@ -867,7 +1205,11 @@ export class KotarriaEngine {
     }
     if (takenAny) {
       sound.playPickup();
-      this.showToast(items.length === 0 ? 'Сундук полностью собран!' : 'Часть предметов осталась (рюкзак полон).');
+      this.showToast(
+        items.length === 0
+          ? this.t('Looted all items from chest!', 'Сундук полностью собран!')
+          : this.t('Some items stayed (backpack full).', 'Часть предметов осталась (рюкзак полон).'),
+      );
     }
     this.syncActiveWeapon();
     this.emitHud(true);
@@ -943,13 +1285,15 @@ export class KotarriaEngine {
     const wx = (tx + 0.5) * TILE_SIZE;
     const wy = ty * TILE_SIZE;
     this.spawnBurst(wx, wy, '#f472b6', 12, 110);
-    this.spawnFloatingText(wx, wy - 8, '♥ Мур!', '#f9a8d4');
+    this.spawnFloatingText(wx, wy - 8, this.t('♥ Purr!', '♥ Мур!'), '#f9a8d4');
     this.stoolSpeech = {
       stage: 'petted',
-      text: 'Нажми на меня ПКМ',
+      text: this.t('Right-click me', 'Нажми на меня ПКМ'),
       timer: 14,
     };
-    this.showToast('Табуретка мурлычет: «Нажми на меня ПКМ»');
+    this.showToast(
+      this.t('Stool purrs: "Right-click me"', 'Табуретка мурлычет: «Нажми на меня ПКМ»'),
+    );
     this.emitHud(true);
   }
 
@@ -957,8 +1301,10 @@ export class KotarriaEngine {
     const wx = (tx + 0.5) * TILE_SIZE;
     const wy = ty * TILE_SIZE;
     if (!this.stoolPetted) {
-      this.showToast('Сначала погладь табуретку! (ЛКМ или F рядом)');
-      this.spawnFloatingText(wx, wy - 8, 'Погладь меня!', '#fde047');
+      this.showToast(
+        this.t('Pet the stool first! (LMB or F nearby)', 'Сначала погладь табуретку! (ЛКМ или F рядом)'),
+      );
+      this.spawnFloatingText(wx, wy - 8, this.t('Pet me!', 'Погладь меня!'), '#fde047');
       this.emitHud(true);
       return;
     }
@@ -966,15 +1312,17 @@ export class KotarriaEngine {
     this.copyToClipboard(STOOL_REPO_URL);
     sound.playStoolCopy();
     this.spawnBurst(wx, wy, '#34d399', 16, 150);
-    this.spawnFloatingText(wx, wy - 10, 'Скопировано!', '#6ee7b7');
+    this.spawnFloatingText(wx, wy - 10, this.t('Copied!', 'Скопировано!'), '#6ee7b7');
     this.stoolSpeech = {
       stage: 'copied',
-      text: 'Вставь это в браузер',
-      hint: 'Подсказка для тех, кто тупой: нажми Ctrl+V',
+      text: this.t('Paste in browser', 'Вставь это в браузер'),
+      hint: this.t('Tip: press Ctrl+V in your browser', 'Подсказка: нажми Ctrl+V в браузере'),
       copiedUrl: STOOL_REPO_URL,
       timer: 25,
     };
-    this.showToast('Табуретка: «Вставь это в браузер» — ссылка скопирована!');
+    this.showToast(
+      this.t('Stool: "Paste in browser" — URL copied!', 'Табуретка: «Вставь это в браузер» — ссылка скопирована!'),
+    );
     this.emitHud(true);
   }
 
@@ -986,7 +1334,7 @@ export class KotarriaEngine {
   public copyStoolUrlAgain(): void {
     this.copyToClipboard(STOOL_REPO_URL);
     sound.playStoolCopy();
-    this.showToast('Ссылка снова скопирована! Нажми Ctrl+V в браузере.');
+    this.showToast(this.t('Link copied again! Press Ctrl+V in your browser.', 'Ссылка снова скопирована! Нажми Ctrl+V в браузере.'));
     this.emitHud(true);
   }
 
@@ -998,7 +1346,7 @@ export class KotarriaEngine {
       this.player.hp = this.player.maxHp;
       this.player.mana = this.player.maxMana + bonuses.maxManaBonus;
     }
-    this.showToast(enabled ? 'Дебаг: Режим бога ВКЛ' : 'Дебаг: Режим бога ВЫКЛ');
+    this.showToast(enabled ? this.t('Debug: God Mode ON', 'Дебаг: Режим бога ВКЛ') : this.t('Debug: God Mode OFF', 'Дебаг: Режим бога ВЫКЛ'));
     this.emitHud(true);
   }
 
@@ -1007,7 +1355,7 @@ export class KotarriaEngine {
     this.player.hp = this.player.maxHp;
     this.player.mana = this.player.maxMana + bonuses.maxManaBonus;
     sound.playHeal();
-    this.showToast('Дебаг: HP и Мана восстановлены');
+    this.showToast(this.t('Debug: HP & Mana restored', 'Дебаг: HP и Мана восстановлены'));
     this.emitHud(true);
   }
 
@@ -1020,16 +1368,17 @@ export class KotarriaEngine {
           : preset === 'evening'
             ? 0.52
             : 0.72;
+    this.lastWasNight = this.timeOfDay >= 0.55 || this.timeOfDay < 0.08;
     recomputeLighting(this.world, this.timeOfDay);
     this.syncMusicTheme();
     this.showToast(
       preset === 'morning'
-        ? 'Дебаг: Установлено утро'
+        ? this.t('Debug: Morning set', 'Дебаг: Установлено утро')
         : preset === 'noon'
-          ? 'Дебаг: Установлен полдень'
+          ? this.t('Debug: Noon set', 'Дебаг: Установлен полдень')
           : preset === 'evening'
-            ? 'Дебаг: Установлен вечер'
-            : 'Дебаг: Наступила ночь',
+            ? this.t('Debug: Evening set', 'Дебаг: Установлен вечер')
+            : this.t('Debug: Night set', 'Дебаг: Наступила ночь'),
     );
     this.emitHud(true);
     if (this.uiModalOpen) {
@@ -1038,14 +1387,14 @@ export class KotarriaEngine {
   }
 
   public giveDebugItem(itemId: string, count: number): void {
-    const res = applyGiveDebugItem(this.hotbar, this.backpack, itemId, count);
+    const res = applyGiveDebugItem(this.hotbar, this.backpack, itemId, count, this.lang);
     if (!ITEMS[itemId]) {
-      this.showToast(`Дебаг: Предмет "${itemId}" не найден`);
+      this.showToast(this.t(`Debug: Item "${itemId}" not found`, `Дебаг: Предмет "${itemId}" не найден`));
       this.emitHud(true);
       return;
     }
     if (res.given <= 0) {
-      this.showToast('Дебаг: Инвентарь переполнен!');
+      this.showToast(this.t('Debug: Inventory is full!', 'Дебаг: Инвентарь переполнен!'));
       this.emitHud(true);
       return;
     }
@@ -1053,8 +1402,11 @@ export class KotarriaEngine {
     this.syncActiveWeapon();
     this.showToast(
       res.leftover > 0
-        ? `Дебаг: Выдано ${res.itemName} ×${res.given} (остаток ${res.leftover} не влез)`
-        : `Дебаг: Выдано ${res.itemName} ×${res.given}`,
+        ? this.t(
+            `Debug: Gave ${res.itemName} ×${res.given} (${res.leftover} overflow)`,
+            `Дебаг: Выдано ${res.itemName} ×${res.given} (остаток ${res.leftover} не влез)`,
+          )
+        : this.t(`Debug: Gave ${res.itemName} ×${res.given}`, `Дебаг: Выдано ${res.itemName} ×${res.given}`),
     );
     this.emitHud(true);
   }
@@ -1064,13 +1416,13 @@ export class KotarriaEngine {
     mode: 'inventory' | 'place' | 'place_and_open',
   ): void {
     if (mode === 'inventory') {
-      const res = applyGiveDebugItem(this.hotbar, this.backpack, 'chest_item', 1);
+      const res = applyGiveDebugItem(this.hotbar, this.backpack, 'chest_item', 1, this.lang);
       if (res.given <= 0) {
-        this.showToast('Дебаг: Инвентарь переполнен!');
+        this.showToast(this.t('Debug: Inventory is full!', 'Дебаг: Инвентарь переполнен!'));
       } else {
         sound.playPickup();
         this.syncActiveWeapon();
-        this.showToast('Дебаг: Сундук добавлен в инвентарь!');
+        this.showToast(this.t('Debug: Chest added to inventory!', 'Дебаг: Сундук добавлен в инвентарь!'));
       }
       this.emitHud(true);
       return;
@@ -1078,12 +1430,12 @@ export class KotarriaEngine {
 
     const placed = placeDebugChestNearPlayer(this.world, this.player, preset);
     if (!placed.placed) {
-      this.showToast('Дебаг: Рядом нет свободного места для сундука!');
+      this.showToast(this.t('Debug: No open tile nearby for chest!', 'Дебаг: Рядом нет свободного места для сундука!'));
       return;
     }
 
     this.stats.blocksPlaced++;
-    recomputeLighting(this.world, this.timeOfDay);
+    recomputeLightingLocal(this.world, this.timeOfDay, placed.tx, placed.ty);
     sound.playPlace();
     this.spawnBurst(
       (placed.tx + 0.5) * TILE_SIZE,
@@ -1092,8 +1444,13 @@ export class KotarriaEngine {
       14,
       150,
     );
-    const presetMeta = DEBUG_CHEST_PRESETS[preset];
-    this.showToast(`Дебаг: Поставлен «${presetMeta.label}» (${placed.tx}, ${placed.ty})`);
+    const presetMeta = getChestPresetInfo(preset, this.lang);
+    this.showToast(
+      this.t(
+        `Debug: Placed "${presetMeta.label}" (${placed.tx}, ${placed.ty})`,
+        `Дебаг: Поставлен «${presetMeta.label}» (${placed.tx}, ${placed.ty})`,
+      ),
+    );
 
     if (mode === 'place_and_open') {
       this.openChest(placed.tx, placed.ty);
@@ -1108,13 +1465,13 @@ export class KotarriaEngine {
   public addDebugCoins(delta: number): void {
     this.player.coins = Math.max(0, this.player.coins + delta);
     sound.playCoin();
-    this.showToast(`Дебаг: Монет теперь ${this.player.coins}`);
+    this.showToast(this.t(`Debug: Coins now ${this.player.coins}`, `Дебаг: Монет теперь ${this.player.coins}`));
     this.emitHud(true);
   }
 
   public resetDebugCoins(): void {
     this.player.coins = 0;
-    this.showToast('Дебаг: Монеты сброшены до 0');
+    this.showToast(this.t('Debug: Coins reset to 0', 'Дебаг: Монеты сброшены до 0'));
     this.emitHud(true);
   }
 
@@ -1128,7 +1485,7 @@ export class KotarriaEngine {
       this.player.mana = Math.min(this.player.maxMana, this.player.mana + Math.max(0, manaDelta));
     }
     sound.playStar();
-    this.showToast(`Дебаг: Макс. HP ${this.player.maxHp}, Мана ${this.player.maxMana}`);
+    this.showToast(this.t(`Debug: Max HP ${this.player.maxHp}, Mana ${this.player.maxMana}`, `Дебаг: Макс. HP ${this.player.maxHp}, Мана ${this.player.maxMana}`));
     this.emitHud(true);
   }
 
@@ -1145,7 +1502,7 @@ export class KotarriaEngine {
 
     let builtRes: ReturnType<typeof buildQuickHouseAt> | null = null;
     for (const anchorX of candidates) {
-      const attempt = buildQuickHouseAt(this.world, anchorX, floorY);
+      const attempt = buildQuickHouseAt(this.world, anchorX, floorY, this.lang);
       if (attempt.built) {
         builtRes = attempt;
         break;
@@ -1154,12 +1511,12 @@ export class KotarriaEngine {
     }
 
     if (!builtRes || !builtRes.built) {
-      this.showToast(builtRes?.reason ?? 'Дебаг: Нет места для постройки дома рядом');
+      this.showToast(builtRes?.reason ?? this.t('Debug: No space to build house nearby', 'Дебаг: Нет места для постройки дома рядом'));
       return;
     }
 
     this.stats.blocksPlaced += 16;
-    recomputeLighting(this.world, this.timeOfDay);
+    recomputeLightingLocal(this.world, this.timeOfDay, builtRes.centerTileX, builtRes.centerTileY);
     sound.playCraft();
     sound.playPlace();
     this.spawnBurst(
@@ -1175,12 +1532,14 @@ export class KotarriaEngine {
       () => this.nextEntityId++,
       this.player,
       this.stats.bossDefeated,
+      false,
+      this.lang,
     );
     this.validHouseCount = sync.validHouseCount;
     this.showToast(
       sync.spawnedNames.length > 0
-        ? `Дебаг: Дом построен! Заселился ${sync.spawnedNames[0]}`
-        : `Дебаг: Дом построен! (Домов: ${this.validHouseCount})`,
+        ? this.t(`Debug: House built! ${sync.spawnedNames[0]} arrived`, `Дебаг: Дом построен! Заселился ${sync.spawnedNames[0]}`)
+        : this.t(`Debug: House built! (Houses: ${this.validHouseCount})`, `Дебаг: Дом построен! (Домов: ${this.validHouseCount})`),
     );
     this.emitHud(true);
     if (this.uiModalOpen) {
@@ -1198,10 +1557,16 @@ export class KotarriaEngine {
         'iron_broadsword',
         'crimson_katana',
         'gold_claymore',
+        'enchanted_sword',
         'ruby_greatsword',
         'obsidian_nightblade',
         'starfury',
+        'star_wrath',
         'terra_blade',
+        'dawnbreaker_sword',
+        'meowmere_blade',
+        'zenith',
+        'vampire_knives',
         'fish_spear',
         'copper_bow',
         'ice_bow',
@@ -1209,10 +1574,19 @@ export class KotarriaEngine {
         'crimson_bow',
         'crystal_bow',
         'minishark',
+        'megashark',
+        'sdmg',
+        'alien_blaster',
+        'melon_blaster',
+        'atomic_launcher',
         'fish_boomerang',
         'fire_staff',
         'frost_wand',
         'water_bolt',
+        'demon_scythe',
+        'pharaoh_staff',
+        'jester_cards',
+        'lollipop_wand',
         'laser_pointer',
         'yarn_bomb',
         'copper_pickaxe',
@@ -1220,25 +1594,31 @@ export class KotarriaEngine {
         'gold_pickaxe',
         'crimson_pickaxe',
         'obsidian_pickaxe',
+        'lunar_pickaxe',
       ];
       for (const id of weaponIds) {
         addItemToInventory(this.hotbar, this.backpack, id, id === 'yarn_bomb' ? 25 : 1);
       }
-      this.showToast('Дебаг: Выданы все кирки, мечи, луки и магия!');
+      this.showToast(
+        this.t(
+          'Debug: Gave all pickaxes, swords, Zenith, bows, guns, and magic!',
+          'Дебаг: Выданы все кирки, мечи, Зенит, луки, пушки и магия!',
+        ),
+      );
     } else if (kind === 'armor') {
       const armorAndAcc = [
-        'crimson_helmet',
-        'crimson_chestplate',
-        'crimson_greaves',
-        'obsidian_helmet',
-        'obsidian_chestplate',
-        'obsidian_greaves',
+        'molten_helmet',
+        'molten_chestplate',
+        'molten_greaves',
+        'hallowed_helmet',
+        'hallowed_chestplate',
+        'hallowed_greaves',
         'crystal_helmet',
         'crystal_chestplate',
         'crystal_greaves',
         'angel_wings',
-        'cobalt_shield',
-        'hermes_boots',
+        'ankh_shield',
+        'terraspark_boots',
         'cloud_in_bottle',
         'shiny_red_balloon',
         'mana_flower',
@@ -1248,34 +1628,43 @@ export class KotarriaEngine {
       for (const id of armorAndAcc) {
         addItemToInventory(this.hotbar, this.backpack, id, 1);
       }
-      this.showToast('Дебаг: Выдана топ-броня, Крылья Ангела и аксессуары!');
+      this.showToast(
+        this.t(
+          'Debug: Gave Molten/Hallowed/Crystal armor, Angel Wings, Ankh Shield & Terraspark Boots!',
+          'Дебаг: Выдана топ-броня, Крылья, Щит Анкха и Терра-ботинки!',
+        ),
+      );
     } else if (kind === 'terraria') {
       const terrariaItems: [string, number][] = [
-        ['starfury', 1],
+        ['zenith', 1],
+        ['star_wrath', 1],
         ['terra_blade', 1],
-        ['minishark', 1],
-        ['water_bolt', 1],
+        ['meowmere_blade', 1],
+        ['vampire_knives', 1],
+        ['sdmg', 1],
+        ['demon_scythe', 1],
         ['grappling_hook', 1],
         ['angel_wings', 1],
-        ['cobalt_shield', 1],
-        ['cloud_in_bottle', 1],
-        ['hermes_boots', 1],
-        ['band_of_regen', 1],
+        ['ankh_shield', 1],
+        ['terraspark_boots', 1],
         ['magic_mirror', 1],
+        ['red_potion', 5],
+        ['milk_potion', 5],
+        ['ironskin_potion', 3],
+        ['regen_potion', 3],
         ['life_crystal', 3],
         ['mana_crystal', 2],
-        ['house_blueprint', 2],
-        ['dynamite', 12],
-        ['terraria_bomb', 15],
-        ['rope_item', 30],
-        ['chandelier_item', 2],
-        ['piggy_bank_item', 1],
+        ['campfire_item', 2],
+        ['heart_lantern_item', 2],
+        ['sunflower_item', 2],
       ];
       for (const [id, cnt] of terrariaItems) {
         addItemToInventory(this.hotbar, this.backpack, id, cnt);
       }
       this.player.coins += 250;
-      this.showToast('Дебаг: Выдан легендарный Терра-набор и +250 монет!');
+      this.showToast(
+        this.t('Debug: Gave legendary Terraria kit & +250 coins!', 'Дебаг: Выдан легендарный Терра-набор и +250 монет!'),
+      );
     } else if (kind === 'resources') {
       const mats: [string, number][] = [
         ['planks_block', 99],
@@ -1285,6 +1674,8 @@ export class KotarriaEngine {
         ['crimson_brick', 64],
         ['marble_block', 64],
         ['sandstone_brick', 64],
+        ['sandstone_wall', 64],
+        ['cactus_block', 32],
         ['crystal_block', 32],
         ['obsidian_block', 32],
         ['torch_item', 50],
@@ -1299,6 +1690,10 @@ export class KotarriaEngine {
         ['ruby_gem', 20],
         ['monster_bone', 30],
         ['slime_gel', 40],
+        ['solar_fragment', 20],
+        ['vortex_fragment', 20],
+        ['nebula_fragment', 20],
+        ['stardust_fragment', 20],
         ['workbench_item', 1],
         ['furnace_item', 1],
         ['anvil_item', 1],
@@ -1307,7 +1702,9 @@ export class KotarriaEngine {
       for (const [id, cnt] of mats) {
         addItemToInventory(this.hotbar, this.backpack, id, cnt);
       }
-      this.showToast('Дебаг: Выданы ресурсы, мебель, блоки и станции!');
+      this.showToast(
+        this.t('Debug: Gave blocks, furniture, fragments & stations!', 'Дебаг: Выданы ресурсы, мебель, фрагменты и станции!'),
+      );
     } else if (kind === 'summons') {
       const summons = [
         'summon_king_slime',
@@ -1328,15 +1725,28 @@ export class KotarriaEngine {
         'summon_duke_fishron',
         'summon_empress_light',
         'summon_cultist',
+        'summon_pillars',
         'summon_moon_lord',
+        'summon_pharaoh_cat',
+        'summon_jester_cat',
+        'summon_sun_cat',
+        'summon_atomic_cat',
+        'summon_party_cat',
+        'summon_melon_bandit',
+        'summon_alien_invasion',
       ];
       for (const id of summons) {
         addItemToInventory(this.hotbar, this.backpack, id, 2);
       }
-      this.showToast('Дебаг: Выданы призывалки всех 19 боссов!');
+      this.showToast(
+        this.t(
+          'Debug: Gave all Boss, Cat Boss, Pillar & Alien summons!',
+          'Дебаг: Выданы призывалки всех боссов, котов, башен и инопланетян!',
+        ),
+      );
     } else {
       addItemToInventory(this.hotbar, this.backpack, 'stool_item', 1);
-      this.showToast('Дебаг: Табуретка добавлена в инвентарь!');
+      this.showToast(this.t('Debug: Stool added to inventory!', 'Дебаг: Табуретка добавлена в инвентарь!'));
     }
     this.syncActiveWeapon();
     this.emitHud(true);
@@ -1350,10 +1760,16 @@ export class KotarriaEngine {
       this.player,
       true,
       true,
+      this.lang,
     );
     this.validHouseCount = sync.validHouseCount;
     sound.playNpcTalk();
-    this.showToast('Все 5 жителей (Гид, Торговец, Медсестра, Подрывник, Дриада) прибыли!');
+    this.showToast(
+      this.t(
+        'All 6 villagers (Guide, Merchant, Nurse, Demolitionist, Dryad, Director Meow) arrived!',
+        'Все 6 жителей (Гид, Торговец, Медсестра, Подрывник, Дриада, Директор Зазу) прибыли!',
+      ),
+    );
     this.emitHud(true);
   }
 
@@ -1366,18 +1782,22 @@ export class KotarriaEngine {
       this.nextEntityId++,
       kind,
       this.player.x + 170 * this.player.facing,
-      this.player.y - (kind === 'bat' ? 120 : 20),
+      this.player.y - (kind.includes('bat') || kind === 'pixie' || kind === 'alien_drone' ? 120 : 20),
       1 + (this.dayCount - 1) * 0.15,
+      this.lang,
     );
     this.enemies.push(enemy);
-    this.showToast(`Дебаг: Призван ${enemy.name}`);
+    const enemyName = getEnemyName(enemy, this.lang);
+    this.showToast(this.t(`Debug: Spawned ${enemyName}`, `Дебаг: Призван ${enemyName}`));
     this.emitHud(true);
   }
 
   public clearAllEnemies(): void {
     this.enemies = [];
     this.projectiles = this.projectiles.filter((p) => p.fromPlayer);
-    this.showToast('Дебаг: Все враги убраны');
+    this.lunarEvent.active = false;
+    this.alienInvasion.active = false;
+    this.showToast(this.t('Debug: All enemies & events cleared', 'Дебаг: Все враги и события убраны'));
     this.emitHud(true);
   }
 
@@ -1387,15 +1807,29 @@ export class KotarriaEngine {
     this.player.vx = 0;
     this.player.vy = 0;
     this.centerCameraImmediate();
-    this.showToast('Дебаг: Телепорт на спавн');
+    this.showToast(this.t('Debug: Teleported to spawn', 'Дебаг: Телепорт на спавн'));
     this.emitHud(true);
   }
 
   public teleportToCoords(tileX: number, tileY: number): void {
-    const dest = teleportPlayerToCoords(this.player, this.world, tileX, tileY);
+    const clampedTx = Math.max(
+      2,
+      Math.min(this.world.width - 3, Math.round(Number.isFinite(tileX) ? tileX : Math.floor(this.world.width / 2))),
+    );
+    const resolvedY =
+      tileY < 0
+        ? Math.max(4, (this.world.surfaceHeights[clampedTx] ?? 70) - 2)
+        : tileY;
+    const dest = teleportPlayerToCoords(this.player, this.world, clampedTx, resolvedY);
+    this.player.vy = 0;
     this.centerCameraImmediate();
     const biome = getBiomeAtX(dest.tx, this.world.width);
-    this.showToast(`Телепорт: X=${dest.tx}, Y=${dest.ty} (${BIOME_NAMES[biome]})`);
+    this.showToast(
+      this.t(
+        `Teleport: X=${dest.tx}, Y=${dest.ty} (${getBiomeName(biome, 'en')})`,
+        `Телепорт: X=${dest.tx}, Y=${dest.ty} (${getBiomeName(biome, 'ru')})`,
+      ),
+    );
     this.emitHud(true);
     if (this.uiModalOpen) {
       this.render();
@@ -1404,7 +1838,7 @@ export class KotarriaEngine {
 
   public boostDefense(delta: number): void {
     this.player.defense = Math.max(0, Math.min(50, this.player.defense + delta));
-    this.showToast(`Дебаг: Броня теперь ${this.player.defense}`);
+    this.showToast(this.t(`Debug: Defense is now ${this.player.defense}`, `Дебаг: Броня теперь ${this.player.defense}`));
     this.emitHud(true);
   }
 
@@ -1565,13 +1999,20 @@ export class KotarriaEngine {
     if (this.timeOfDay < prevTime) {
       this.dayCount++;
       this.stats.daysSurvived = this.dayCount;
-      this.showToast(`Наступил день ${this.dayCount}!`);
+      this.showToast(this.t(`Day ${this.dayCount} has begun!`, `Наступил день ${this.dayCount}!`));
     }
 
-    // Update lighting periodically
+    // Update lighting periodically (local around player; full refresh on day/night transition)
+    const isNightCycle = this.timeOfDay >= 0.55 || this.timeOfDay < 0.08;
     this.lightUpdateTimer -= dt;
-    if (this.lightUpdateTimer <= 0) {
+    if (isNightCycle !== this.lastWasNight) {
+      this.lastWasNight = isNightCycle;
       recomputeLighting(this.world, this.timeOfDay);
+      this.lightUpdateTimer = 0.6;
+    } else if (this.lightUpdateTimer <= 0) {
+      const ptx = Math.floor((this.player.x + this.player.width / 2) / TILE_SIZE);
+      const pty = Math.floor((this.player.y + this.player.height / 2) / TILE_SIZE);
+      recomputeLightingLocal(this.world, this.timeOfDay, ptx, pty, 36);
       this.lightUpdateTimer = 0.6;
     }
 
@@ -1585,7 +2026,12 @@ export class KotarriaEngine {
         this.player.y + this.player.height / 2,
       );
       if (this.player.houseValid && !wasValid) {
-        this.showToast('Уютный дом построен! Здоровье восстанавливается.');
+        this.showToast(
+          this.t(
+            'Cozy home verified! Health regenerates indoors.',
+            'Уютный дом построен! Здоровье восстанавливается.',
+          ),
+        );
       }
       this.houseCheckTimer = 0.8;
     }
@@ -1596,6 +2042,85 @@ export class KotarriaEngine {
         this.houseRegenTimer = 0;
         this.player.hp = Math.min(this.player.maxHp, this.player.hp + 3);
       }
+    }
+
+    // Tick active buffs/debuffs & nearby Terraria tile auras (Campfire, Heart Lantern, Sunflower)
+    stepActiveEffects(this.player.effects, dt);
+    const fxMods = computeEffectModifiers(this.player.effects);
+    const fireImmune = Boolean(equipBonuses.hasFireImmune || fxMods.fireImmune);
+    if (fireImmune) {
+      const fireIdx = this.player.effects.findIndex((e) => e.id === 'on_fire');
+      if (fireIdx !== -1) this.player.effects.splice(fireIdx, 1);
+    }
+
+    const ptxNow = Math.floor((this.player.x + this.player.width / 2) / TILE_SIZE);
+    const ptyNow = Math.floor((this.player.y + this.player.height / 2) / TILE_SIZE);
+    let hasCampfire = false;
+    let hasHeartLantern = false;
+    let hasSunflower = false;
+    for (let dy = -6; dy <= 6; dy++) {
+      for (let dx = -7; dx <= 7; dx++) {
+        const t = getTile(this.world, ptxNow + dx, ptyNow + dy);
+        if (t === TileType.Campfire) hasCampfire = true;
+        else if (t === TileType.HeartLantern) hasHeartLantern = true;
+        else if (t === TileType.Sunflower) hasSunflower = true;
+      }
+    }
+
+    const totalFxRegen =
+      fxMods.hpRegenPerSec + (hasCampfire ? 1.5 : 0) + (hasHeartLantern ? 2.0 : 0);
+    if (totalFxRegen > 0 && this.player.hp < this.player.maxHp) {
+      this.effectRegenTimer += dt * totalFxRegen;
+      if (this.effectRegenTimer >= 1) {
+        const heal = Math.floor(this.effectRegenTimer);
+        this.effectRegenTimer -= heal;
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + heal);
+      }
+    }
+
+    if (fxMods.hpDotPerSec > 0 && !this.godMode) {
+      this.effectDotTimer += dt * fxMods.hpDotPerSec;
+      if (this.effectDotTimer >= 1) {
+        const dotDmg = Math.floor(this.effectDotTimer);
+        this.effectDotTimer -= dotDmg;
+        this.player.hp = Math.max(0, this.player.hp - dotDmg);
+        this.spawnFloatingText(
+          this.player.x + this.player.width / 2,
+          this.player.y - 10,
+          `-${dotDmg}`,
+          '#f97316',
+        );
+        if (this.player.hp <= 0) {
+          this.setPhase('gameover');
+          return;
+        }
+      }
+    }
+
+    if (fxMods.hasShine) {
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          const lx = ptxNow + dx;
+          const ly = ptyNow + dy;
+          if (lx >= 0 && lx < this.world.width && ly >= 0 && ly < this.world.height) {
+            const dist = Math.hypot(dx, dy);
+            if (dist <= 4.5) {
+              const idx = tileIndex(lx, ly, this.world.width);
+              const shineVal = Math.max(0.25, 1.0 - dist * 0.16);
+              if (shineVal > this.world.light[idx]) {
+                this.world.light[idx] = shineVal;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Periodic autosave to active slot (or autosave slot)
+    this.autoSaveTimer -= dt;
+    if (this.autoSaveTimer <= 0) {
+      this.autoSaveTimer = 25;
+      this.saveCurrentWorld(this.activeSaveId ?? 'autosave_slot', true);
     }
 
     // Equipped armor & accessory bonuses
@@ -1621,7 +2146,7 @@ export class KotarriaEngine {
 
     // Auto-open closed doors when walking straight up against them (Terraria Smart Doors)
     if (input.left !== input.right) {
-      const dir = input.right ? 1 : -1;
+      const dir = (input.right ? 1 : -1) * (fxMods.invertHorizontal ? -1 : 1);
       const frontX = dir > 0 ? this.player.x + this.player.width + 6 : this.player.x - 6;
       const frontTx = Math.floor(frontX / TILE_SIZE);
       const topTy = Math.floor((this.player.y + 6) / TILE_SIZE);
@@ -1631,7 +2156,7 @@ export class KotarriaEngine {
           const opened = toggleDoorAtTile(this.world, this.player, frontTx, ty);
           if (opened.toggled) {
             sound.playPlace();
-            recomputeLighting(this.world, this.timeOfDay);
+            recomputeLightingLocal(this.world, this.timeOfDay, frontTx, ty);
             this.emitHud();
           }
           break;
@@ -1646,11 +2171,13 @@ export class KotarriaEngine {
       input,
       dt,
       {
-        speedMult: equipBonuses.speedMult,
+        speedMult: equipBonuses.speedMult * fxMods.speedMult * (hasSunflower ? 1.1 : 1),
         jumpMult: equipBonuses.jumpMult,
         hasDoubleJump: equipBonuses.hasDoubleJump,
         hasWings: equipBonuses.hasWings,
-        manaRegenBonus: equipBonuses.manaRegenBonus,
+        manaRegenBonus: equipBonuses.manaRegenBonus + fxMods.manaRegenBonus,
+        gravityMult: fxMods.gravityMult,
+        invertHorizontal: fxMods.invertHorizontal,
       },
     );
     const effectiveMaxMana = this.player.maxMana + equipBonuses.maxManaBonus;
@@ -1659,7 +2186,7 @@ export class KotarriaEngine {
       this.player.mana >= this.player.maxMana &&
       this.player.mana < effectiveMaxMana
     ) {
-      const manaRate = (this.player.houseValid ? 8 : 5) + equipBonuses.manaRegenBonus;
+      const manaRate = (this.player.houseValid ? 8 : 5) + equipBonuses.manaRegenBonus + fxMods.manaRegenBonus;
       this.player.mana = Math.min(effectiveMaxMana, this.player.mana + manaRate * dt);
     }
 
@@ -1685,7 +2212,7 @@ export class KotarriaEngine {
     }
     if (landed) {
       this.spawnBurst(this.player.x + this.player.width / 2, this.player.y + this.player.height, '#a8a29e', 4, 60);
-      if (!equipBonuses.hasNoFallDamage && !this.godMode && preStepVy > 590) {
+      if (!equipBonuses.hasNoFallDamage && !fxMods.noFallDamage && !this.godMode && preStepVy > 590) {
         const fallDmg = Math.round((preStepVy - 560) * 0.14);
         if (fallDmg > 0) {
           this.damagePlayer(fallDmg, 0);
@@ -1730,10 +2257,17 @@ export class KotarriaEngine {
         () => this.nextEntityId++,
         this.player,
         this.stats.bossDefeated,
+        false,
+        this.lang,
       );
       this.validHouseCount = sync.validHouseCount;
       if (sync.spawnedNames.length > 0) {
-        this.showToast(`В деревню поселился житель: ${sync.spawnedNames[0]}!`);
+        this.showToast(
+          this.t(
+            `New villager arrived: ${sync.spawnedNames[0]}!`,
+            `В деревню поселился житель: ${sync.spawnedNames[0]}!`,
+          ),
+        );
         sound.playNpcTalk();
       }
     }
@@ -1823,16 +2357,25 @@ export class KotarriaEngine {
     const { tx, ty, wx, wy, inRange } = this.getHoverWorldTile();
     const hoverTile = inRange ? getTile(this.world, tx, ty) : TileType.Air;
 
-    const wantPlace = this.mouseRightDown || (this.mouseLeftDown && this.activeToolMode === 'build');
-    const wantPrimary = this.mouseLeftDown && this.activeToolMode !== 'build';
+    const leftActive = this.mouseLeftDown || this.mouseLeftQueued;
+    const rightActive = this.mouseRightDown || this.mouseRightQueued;
+    if (this.attackCooldown <= 0 || this.activeToolMode === 'build') {
+      this.mouseLeftQueued = false;
+    }
+    if (this.placeCooldown <= 0) {
+      this.mouseRightQueued = false;
+    }
+
+    const wantPlace = rightActive || (leftActive && this.activeToolMode === 'build');
+    const wantPrimary = leftActive && this.activeToolMode !== 'build';
 
     // Right-clicking (or Build-mode LMB on) a door, chest, stool, bed, or NPC works regardless of held item
-    if (this.mouseRightDown && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Chest) {
+    if (rightActive && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Chest) {
       this.openChest(tx, ty);
       this.placeCooldown = 0.35;
       return;
     }
-    if (this.mouseRightDown && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Stool) {
+    if (rightActive && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Stool) {
       this.interactStoolRightClick(tx, ty);
       this.placeCooldown = 0.35;
       return;
@@ -1846,24 +2389,24 @@ export class KotarriaEngine {
       const doorRes = toggleDoorAtTile(this.world, this.player, tx, ty);
       if (doorRes.toggled) {
         sound.playPlace();
-        recomputeLighting(this.world, this.timeOfDay);
+        recomputeLightingLocal(this.world, this.timeOfDay, tx, ty);
         this.emitHud();
       } else if (doorRes.blockedByPlayer) {
-        this.showToast('Отойди от проёма, чтобы закрыть дверь!');
+        this.showToast(this.t('Step away from doorway to close the door!', 'Отойди от проёма, чтобы закрыть дверь!'));
         this.emitHud();
       }
       this.placeCooldown = 0.25;
       return;
     }
-    if (this.mouseRightDown && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Bed) {
+    if (rightActive && this.placeCooldown <= 0 && inRange && hoverTile === TileType.Bed) {
       this.player.spawnX = tx * TILE_SIZE + 2;
       this.player.spawnY = ty * TILE_SIZE - this.player.height - 2;
       sound.playHeal();
-      this.showToast('Точка возрождения установлена на лежанку!');
+      this.showToast(this.t('Spawn point set at bed!', 'Точка возрождения установлена на лежанку!'));
       this.placeCooldown = 0.4;
       return;
     }
-    if (this.mouseRightDown && this.placeCooldown <= 0) {
+    if (rightActive && this.placeCooldown <= 0) {
       const clickedNpc = this.findNpcAtPoint(wx, wy);
       if (clickedNpc) {
         this.openNpc(clickedNpc.id);
@@ -1878,10 +2421,22 @@ export class KotarriaEngine {
         this.placeCooldown = 0.3;
         return;
       }
-      if (item?.category === 'summon' && item.summonsBoss) {
-        this.summonBoss(item.summonsBoss, true);
-        this.placeCooldown = 0.5;
-        return;
+      if (item?.category === 'summon') {
+        if (item.specialKind === 'lunar_sigil') {
+          this.spawnCelestialPillars(true);
+          this.placeCooldown = 0.5;
+          return;
+        }
+        if (item.specialKind === 'alien_probe') {
+          this.startAlienInvasion(true);
+          this.placeCooldown = 0.5;
+          return;
+        }
+        if (item.summonsBoss) {
+          this.summonBoss(item.summonsBoss, true);
+          this.placeCooldown = 0.5;
+          return;
+        }
       }
       if (slot && item && (item.placesTile !== undefined || item.placesWall !== undefined)) {
         const res = tryPlaceItemAtTile(this.world, this.player, slot.itemId, tx, ty);
@@ -1894,7 +2449,7 @@ export class KotarriaEngine {
           this.stats.blocksPlaced++;
           sound.playPlace();
           this.spawnBurst((tx + 0.5) * TILE_SIZE, (ty + 0.5) * TILE_SIZE, item.color, 6, 90);
-          recomputeLighting(this.world, this.timeOfDay);
+          recomputeLightingLocal(this.world, this.timeOfDay, tx, ty);
           this.placeCooldown = 0.14;
           this.emitHud();
         } else if (res.action === 'door_toggle') {
@@ -1902,7 +2457,7 @@ export class KotarriaEngine {
           this.placeCooldown = 0.25;
         } else if (res.action === 'bed_spawn') {
           sound.playHeal();
-          this.showToast('Точка возрождения установлена на лежанку!');
+          this.showToast(this.t('Spawn point set at bed!', 'Точка возрождения установлена на лежанку!'));
           this.placeCooldown = 0.4;
         } else if (res.action === 'stool_interact') {
           this.interactStoolRightClick(tx, ty);
@@ -1931,10 +2486,22 @@ export class KotarriaEngine {
         return;
       }
 
-      if (item.category === 'summon' && item.summonsBoss) {
-        this.summonBoss(item.summonsBoss, true);
-        this.attackCooldown = 0.5;
-        return;
+      if (item.category === 'summon') {
+        if (item.specialKind === 'lunar_sigil') {
+          this.spawnCelestialPillars(true);
+          this.attackCooldown = 0.5;
+          return;
+        }
+        if (item.specialKind === 'alien_probe') {
+          this.startAlienInvasion(true);
+          this.attackCooldown = 0.5;
+          return;
+        }
+        if (item.summonsBoss) {
+          this.summonBoss(item.summonsBoss, true);
+          this.attackCooldown = 0.5;
+          return;
+        }
       }
 
       if (item.category === 'tool') {
@@ -1985,7 +2552,7 @@ export class KotarriaEngine {
                   pickupDelay: 0.18,
                 });
               }
-              recomputeLighting(this.world, this.timeOfDay);
+              recomputeLightingLocal(this.world, this.timeOfDay, tx, ty);
             } else {
               sound.playMineHit();
               this.spawnBurst(tileX, tileY, '#94a3b8', 4, 70);
@@ -1993,7 +2560,6 @@ export class KotarriaEngine {
           }
         }
         this.triggerSwingAnimation(item.cooldown ?? 0.22, wx, wy);
-        // Pickaxes can also bop nearby monsters and break nearby pots!
         this.performMeleeHitbox(item.damage ?? 6, item.reach ?? 54, item.knockback ?? 3);
         this.attackCooldown = item.cooldown ?? 0.22;
         return;
@@ -2004,7 +2570,6 @@ export class KotarriaEngine {
         return;
       }
 
-      // If holding a block in auto mode and clicking LMB, also allow placing!
       if (item.placesTile !== undefined || item.placesWall !== undefined) {
         const res = tryPlaceItemAtTile(this.world, this.player, item.id, tx, ty);
         if (res.placed) {
@@ -2015,7 +2580,7 @@ export class KotarriaEngine {
           }
           this.stats.blocksPlaced++;
           sound.playPlace();
-          recomputeLighting(this.world, this.timeOfDay);
+          recomputeLightingLocal(this.world, this.timeOfDay, tx, ty);
           this.attackCooldown = 0.14;
           this.emitHud();
         }
@@ -2039,14 +2604,15 @@ export class KotarriaEngine {
     targetWy: number,
   ): void {
     const bonuses = computeEquipmentBonuses(this.equipment);
+    const fxMods = computeEffectModifiers(this.player.effects);
     const manaCost = Math.max(0, Math.round((item.manaCost ?? 0) * bonuses.manaCostMult));
     if (manaCost > 0 && this.player.mana < manaCost) {
-      this.showToast('Недостаточно маны!');
+      this.showToast(this.t('Not enough mana!', 'Недостаточно маны!'));
       this.attackCooldown = 0.25;
       return;
     }
 
-    const dmgScale = bonuses.damageMult;
+    const dmgScale = bonuses.damageMult * fxMods.damageMult;
     const scaledDamage = (base: number) => Math.max(1, Math.round(base * dmgScale));
 
     const pcx = this.player.x + this.player.width / 2;
@@ -2070,7 +2636,69 @@ export class KotarriaEngine {
       sound.playSwing();
       this.performMeleeHitbox(scaledDamage(item.damage ?? 15), item.reach ?? 68, item.knockback ?? 5);
 
-      if (item.id === 'starfury') {
+      if (item.id === 'zenith') {
+        const bladePalette = [
+          { color: '#22d3ee', accent: '#cffafe' },
+          { color: '#f472b6', accent: '#fef08a' },
+          { color: '#10b981', accent: '#a7f3d0' },
+          { color: '#a855f7', accent: '#e9d5ff' },
+          { color: '#f59e0b', accent: '#fde68a' },
+        ];
+        sound.playMagic();
+        for (let b = 0; b < 3; b++) {
+          const pal = bladePalette[(Math.floor(this.elapsed * 20) + b) % bladePalette.length];
+          const spreadAng = angle + (b - 1) * 0.18;
+          const bSpeed = 860 + b * 75;
+          this.projectiles.push({
+            id: this.nextEntityId++,
+            fromPlayer: true,
+            kind: 'zenith_blade',
+            x: pcx,
+            y: pcy,
+            vx: Math.cos(spreadAng) * bSpeed,
+            vy: Math.sin(spreadAng) * bSpeed,
+            radius: 16,
+            damage: scaledDamage(Math.round((item.damage ?? 190) * 0.85)),
+            knockback: 7,
+            life: 0.72,
+            maxLife: 0.72,
+            pierceLeft: 99,
+            aoeRadius: 0,
+            color: pal.color,
+            accentColor: pal.accent,
+            curveDir: b % 2 === 0 ? 1 : -1,
+            returning: false,
+            hitIds: [],
+          });
+        }
+      } else if (item.id === 'star_wrath') {
+        sound.playStar();
+        for (let m = 0; m < 3; m++) {
+          const startX = targetWx + (m - 1) * 70 - 80;
+          const startY = targetWy - 420 - m * 45;
+          const sAng = Math.atan2(targetWy - startY, targetWx + (m - 1) * 28 - startX);
+          const sSpeed = 920;
+          this.projectiles.push({
+            id: this.nextEntityId++,
+            fromPlayer: true,
+            kind: 'star_wrath',
+            x: startX,
+            y: startY,
+            vx: Math.cos(sAng) * sSpeed,
+            vy: Math.sin(sAng) * sSpeed,
+            radius: 13,
+            damage: scaledDamage((item.damage ?? 118) + 18),
+            knockback: 6,
+            life: 1.15,
+            maxLife: 1.15,
+            pierceLeft: 4,
+            aoeRadius: 0,
+            color: '#ec4899',
+            accentColor: '#fde047',
+            hitIds: [],
+          });
+        }
+      } else if (item.id === 'starfury') {
         const startX = targetWx + (Math.random() - 0.5) * 90 - 90;
         const startY = targetWy - 380;
         const sAng = Math.atan2(targetWy - startY, targetWx - startX);
@@ -2094,8 +2722,13 @@ export class KotarriaEngine {
           color: '#fde047',
           hitIds: [],
         });
-      } else if (item.id === 'terra_blade') {
-        const beamSpeed = 620;
+      } else if (
+        item.id === 'terra_blade' ||
+        item.id === 'dawnbreaker_sword' ||
+        item.id === 'enchanted_sword'
+      ) {
+        const beamSpeed =
+          item.id === 'dawnbreaker_sword' ? 680 : item.id === 'enchanted_sword' ? 540 : 620;
         sound.playMagic();
         this.projectiles.push({
           id: this.nextEntityId++,
@@ -2105,14 +2738,42 @@ export class KotarriaEngine {
           y: pcy,
           vx: Math.cos(angle) * beamSpeed,
           vy: Math.sin(angle) * beamSpeed,
-          radius: 11,
+          radius: item.id === 'enchanted_sword' ? 9 : 11,
           damage: scaledDamage(Math.round((item.damage ?? 58) * 0.9)),
           knockback: 5.5,
           life: 1.1,
           maxLife: 1.1,
-          pierceLeft: 3,
+          pierceLeft: item.id === 'enchanted_sword' ? 2 : 3,
           aoeRadius: 0,
-          color: '#10b981',
+          color:
+            item.id === 'dawnbreaker_sword'
+              ? '#f59e0b'
+              : item.id === 'enchanted_sword'
+                ? '#38bdf8'
+                : '#10b981',
+          hitIds: [],
+        });
+      } else if (item.id === 'meowmere_blade') {
+        const boltSpeed = 620;
+        sound.playStar();
+        this.projectiles.push({
+          id: this.nextEntityId++,
+          fromPlayer: true,
+          kind: 'rainbow_cat',
+          x: pcx,
+          y: pcy,
+          vx: Math.cos(angle) * boltSpeed,
+          vy: Math.sin(angle) * boltSpeed,
+          radius: 11,
+          damage: scaledDamage(Math.round((item.damage ?? 94) * 0.85)),
+          knockback: 6,
+          life: 2.4,
+          maxLife: 2.4,
+          pierceLeft: 5,
+          bouncesLeft: 4,
+          aoeRadius: 0,
+          color: '#ec4899',
+          accentColor: '#5eead4',
           hitIds: [],
         });
       }
@@ -2145,7 +2806,7 @@ export class KotarriaEngine {
       });
     } else if (item.weaponKind === 'gun') {
       sound.playLaser();
-      const spread = (Math.random() - 0.5) * 0.08;
+      const spread = (Math.random() - 0.5) * (item.id === 'sdmg' ? 0.04 : 0.08);
       const gAng = angle + spread;
       this.projectiles.push({
         id: this.nextEntityId++,
@@ -2162,11 +2823,86 @@ export class KotarriaEngine {
         maxLife: 1.3,
         pierceLeft: item.pierce ?? 1,
         aoeRadius: 0,
-        color: '#fde047',
+        color: item.id === 'sdmg' ? '#5eead4' : '#fde047',
         hitIds: [],
       });
     } else if (item.weaponKind === 'magic') {
       sound.playMagic();
+      if (item.id === 'vampire_knives') {
+        for (const offset of [-0.18, -0.06, 0.06, 0.18]) {
+          const kAng = angle + offset;
+          this.projectiles.push({
+            id: this.nextEntityId++,
+            fromPlayer: true,
+            kind: 'vampire_knife',
+            x: pcx,
+            y: pcy,
+            vx: Math.cos(kAng) * speed,
+            vy: Math.sin(kAng) * speed,
+            radius: 7,
+            damage: scaledDamage(item.damage ?? 38),
+            knockback: item.knockback ?? 3,
+            life: 0.9,
+            maxLife: 0.9,
+            pierceLeft: item.pierce ?? 2,
+            aoeRadius: 0,
+            color: '#dc2626',
+            accentColor: '#fca5a5',
+            lifesteal: 0.1,
+            hitIds: [],
+          });
+        }
+        return;
+      }
+      if (item.id === 'demon_scythe') {
+        for (const offset of [-0.1, 0.1]) {
+          const sAng = angle + offset;
+          this.projectiles.push({
+            id: this.nextEntityId++,
+            fromPlayer: true,
+            kind: 'demon_scythe',
+            x: pcx,
+            y: pcy,
+            vx: Math.cos(sAng) * speed,
+            vy: Math.sin(sAng) * speed,
+            radius: 11,
+            damage: scaledDamage(item.damage ?? 42),
+            knockback: item.knockback ?? 4.5,
+            life: 1.9,
+            maxLife: 1.9,
+            pierceLeft: item.pierce ?? 5,
+            aoeRadius: 0,
+            color: '#9333ea',
+            accentColor: '#e879f9',
+            hitIds: [],
+          });
+        }
+        return;
+      }
+      if (item.id === 'jester_cards') {
+        for (const offset of [-0.14, 0, 0.14]) {
+          const cAng = angle + offset;
+          this.projectiles.push({
+            id: this.nextEntityId++,
+            fromPlayer: true,
+            kind: 'stinger',
+            x: pcx,
+            y: pcy,
+            vx: Math.cos(cAng) * speed,
+            vy: Math.sin(cAng) * speed,
+            radius: 7,
+            damage: scaledDamage(item.damage ?? 44),
+            knockback: item.knockback ?? 4,
+            life: 1.8,
+            maxLife: 1.8,
+            pierceLeft: item.pierce ?? 3,
+            aoeRadius: 0,
+            color: offset === 0 ? '#a855f7' : offset < 0 ? '#ef4444' : '#38bdf8',
+            hitIds: [],
+          });
+        }
+        return;
+      }
       const isWaterBolt = item.id === 'water_bolt';
       this.projectiles.push({
         id: this.nextEntityId++,
@@ -2200,11 +2936,11 @@ export class KotarriaEngine {
         radius: 5,
         damage: scaledDamage(item.damage ?? 17),
         knockback: item.knockback ?? 2,
-        life: 0.7,
-        maxLife: 0.7,
+        life: 0.75,
+        maxLife: 0.75,
         pierceLeft: item.pierce ?? 2,
         aoeRadius: 0,
-        color: '#ef4444',
+        color: item.color || '#ef4444',
         hitIds: [],
       });
     } else if (item.weaponKind === 'boomerang') {
@@ -2232,6 +2968,7 @@ export class KotarriaEngine {
       sound.playSwing();
       const isDynamite = item.id === 'dynamite';
       const isTerrariaBomb = item.id === 'terraria_bomb';
+      const isAtomicLauncher = item.id === 'atomic_launcher';
       this.projectiles.push({
         id: this.nextEntityId++,
         fromPlayer: true,
@@ -2239,8 +2976,8 @@ export class KotarriaEngine {
         x: pcx,
         y: pcy,
         vx,
-        vy: vy - 90,
-        radius: 9,
+        vy: isAtomicLauncher ? vy : vy - 90,
+        radius: isAtomicLauncher ? 12 : 9,
         damage: scaledDamage(item.damage ?? 42),
         knockback: item.knockback ?? 9,
         life: 1.4,
@@ -2251,11 +2988,13 @@ export class KotarriaEngine {
         color: item.color,
         hitIds: [],
       });
-      slot.count--;
-      if (slot.count <= 0) {
-        this.hotbar[this.selectedSlot] = null;
-        this.syncActiveWeapon();
-        this.emitHud();
+      if (!isAtomicLauncher) {
+        slot.count--;
+        if (slot.count <= 0) {
+          this.hotbar[this.selectedSlot] = null;
+          this.syncActiveWeapon();
+          this.emitHud();
+        }
       }
     }
   }
@@ -2290,16 +3029,24 @@ export class KotarriaEngine {
   }
 
   private damageEnemy(enemy: EnemyEntity, rawDmg: number, kbX: number, kbY: number): void {
-    const dmg = computeDamageAfterDefense(rawDmg, enemy.defense);
+    const isShieldedPillar = isPillarKind(enemy.kind) && (enemy.shield ?? 0) > 0;
+    const dmg = isShieldedPillar ? 1 : computeDamageAfterDefense(rawDmg, enemy.defense);
     enemy.hp -= dmg;
     enemy.hitFlashTimer = 0.06;
-    enemy.vx = kbX;
-    enemy.vy = Math.min(enemy.vy, kbY);
+    if (!isPillarKind(enemy.kind)) {
+      enemy.vx = kbX;
+      enemy.vy = Math.min(enemy.vy, kbY);
+    }
 
     const ex = enemy.x + enemy.width / 2;
     const ey = enemy.y + enemy.height / 2;
-    this.spawnFloatingText(ex, enemy.y - 6, `${dmg}`, '#fde047');
-    this.spawnBurst(ex, ey, '#f87171', 12, 160);
+    this.spawnFloatingText(
+      ex,
+      enemy.y - 6,
+      isShieldedPillar ? this.t('SHIELD 1', 'ЩИТ 1') : `${dmg}`,
+      isShieldedPillar ? '#38bdf8' : '#fde047',
+    );
+    this.spawnBurst(ex, ey, isShieldedPillar ? '#38bdf8' : '#f87171', 12, 160);
     sound.playEnemyHit();
     this.trauma = Math.min(1, this.trauma + 0.25);
 
@@ -2314,14 +3061,82 @@ export class KotarriaEngine {
         ? 40 + Math.floor(Math.random() * 25)
         : 2 + Math.floor(Math.random() * 7);
       this.player.coins += coinReward;
-      this.spawnFloatingText(ex, enemy.y - 20, `+${coinReward} монет`, '#facc15');
+      this.spawnFloatingText(ex, enemy.y - 20, this.t(`+${coinReward} coins`, `+${coinReward} монет`), '#facc15');
       sound.playCoin();
+
+      // Pillar minion shield reduction
+      const minionToPillar: Partial<Record<EnemyKind, EnemyKind>> = {
+        solar_corite: 'solar_pillar',
+        vortex_alien: 'vortex_pillar',
+        nebula_floater: 'nebula_pillar',
+        stardust_cell: 'stardust_pillar',
+      };
+      const linkedPillarKind = minionToPillar[enemy.kind];
+      if (linkedPillarKind) {
+        const pillar = this.enemies.find(
+          (e) => e.kind === linkedPillarKind && e.aiState !== 'ko' && (e.shield ?? 0) > 0,
+        );
+        if (pillar) {
+          pillar.shield = Math.max(0, (pillar.shield ?? 0) - 1);
+          this.spawnBurst(pillar.x + pillar.width / 2, pillar.y + pillar.height / 2, '#38bdf8', 14, 180);
+          if (pillar.shield === 0) {
+            this.showToast(
+              this.t(`${pillar.name}'s shield shattered!`, `Щит «${pillar.name}» разрушен!`),
+            );
+          }
+        }
+      }
+
+      // Alien Invasion progression
+      if (
+        this.alienInvasion.active &&
+        (enemy.kind === 'alien_cat' || enemy.kind === 'alien_drone' || enemy.kind === 'martian_saucer')
+      ) {
+        this.alienInvasion.defeated += enemy.kind === 'martian_saucer' ? 4 : 1;
+        if (!this.alienInvasion.saucerSpawned && this.alienInvasion.defeated >= 12) {
+          this.alienInvasion.saucerSpawned = true;
+          this.summonBoss('martian_saucer', false);
+        }
+        if (this.alienInvasion.defeated >= this.alienInvasion.target) {
+          this.alienInvasion.active = false;
+          this.player.coins += 150;
+          this.showToast(
+            this.t('Alien Invasion repelled! +150 bonus coins!', 'Нашествие инопланетян отражено! +150 монет!'),
+          );
+          this.syncMusicTheme();
+        }
+      }
 
       if (isBossKind(enemy.kind)) {
         this.stats.bossDefeated = true;
-        this.showToast(`${enemy.name} повержен! +${coinReward} монет и трофеи!`);
+        this.showToast(
+          this.t(
+            `${getEnemyName(enemy, 'en')} defeated! +${coinReward} coins & loot!`,
+            `${getEnemyName(enemy, 'ru')} повержен! +${coinReward} монет и трофеи!`,
+          ),
+        );
         this.syncMusicTheme();
+
+        if (enemy.kind === 'lunatic_cultist') {
+          this.spawnCelestialPillars(false);
+        } else if (isPillarKind(enemy.kind)) {
+          const remainingPillars = this.enemies.filter(
+            (e) => e.id !== enemy.id && isPillarKind(e.kind) && e.aiState !== 'ko',
+          );
+          if (remainingPillars.length === 0 && this.lunarEvent.active && !this.lunarEvent.moonLordSpawned) {
+            this.lunarEvent.active = false;
+            this.lunarEvent.moonLordSpawned = true;
+            this.summonBoss('moon_lord', false);
+            this.showToast(
+              this.t(
+                'All 4 Celestial Pillars destroyed! Moon Lord awakens!',
+                'Все 4 Небесные Башни пали! Лунный Лорд пробудился!',
+              ),
+            );
+          }
+        }
       }
+
       this.spawnBurst(ex, ey, '#fb923c', 20, 210);
       for (const d of enemy.drops) {
         if (Math.random() <= d.chance) {
@@ -2352,6 +3167,38 @@ export class KotarriaEngine {
 
       if (p.kind === 'arrow' || p.kind === 'yarn_bomb' || p.kind === 'dynamite') {
         p.vy += GRAVITY * (p.kind === 'arrow' ? 0.45 : 0.85) * dt;
+      } else if (p.kind === 'demon_scythe') {
+        const curSpd = Math.hypot(p.vx, p.vy);
+        if (curSpd > 0 && curSpd < 840) {
+          const factor = 1 + 2.8 * dt;
+          p.vx *= factor;
+          p.vy *= factor;
+        }
+      } else if (p.kind === 'zenith_blade') {
+        const pcx = this.player.x + this.player.width / 2;
+        const pcy = this.player.y + this.player.height / 2;
+        const curve = p.curveDir ?? 1;
+        if (!p.returning) {
+          // Sweeping Terraria Zenith arc perpendicular to travel
+          const ang = Math.atan2(p.vy, p.vx) + curve * 1.45 * dt;
+          const spd = Math.hypot(p.vx, p.vy);
+          p.vx = Math.cos(ang) * spd;
+          p.vy = Math.sin(ang) * spd;
+          if (p.life < p.maxLife * 0.52) {
+            p.returning = true;
+            p.hitIds = [];
+          }
+        } else {
+          const dx = pcx - p.x;
+          const dy = pcy - p.y;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          p.vx = (dx / len) * 960;
+          p.vy = (dy / len) * 960;
+          if (len < 28) {
+            this.projectiles.splice(i, 1);
+            continue;
+          }
+        }
       } else if (p.kind === 'boomerang') {
         if (!p.returning && p.life < p.maxLife * 0.55) {
           p.returning = true;
@@ -2377,15 +3224,19 @@ export class KotarriaEngine {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
 
-      // Trail particles for magic/bombs/stars
+      // Trail particles for magic/bombs/stars/zenith
       if (
         p.kind === 'fireball' ||
         p.kind === 'frost_bolt' ||
         p.kind === 'yarn_bomb' ||
         p.kind === 'dynamite' ||
         p.kind === 'star_rain' ||
+        p.kind === 'star_wrath' ||
         p.kind === 'terra_beam' ||
-        p.kind === 'water_bolt'
+        p.kind === 'water_bolt' ||
+        p.kind === 'rainbow_cat' ||
+        p.kind === 'zenith_blade' ||
+        p.kind === 'demon_scythe'
       ) {
         if (Math.random() < 0.65) {
           this.spawnParticle(p.x, p.y, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, p.color, 3.2, 0.22, 40);
@@ -2402,16 +3253,16 @@ export class KotarriaEngine {
       }
 
       const hitSolidTile = isTileSolid(hitTile);
-      if (hitSolidTile && p.kind !== 'boomerang') {
-        if (p.kind === 'water_bolt' && (p.bouncesLeft ?? 0) > 0) {
+      if (hitSolidTile && p.kind !== 'boomerang' && p.kind !== 'zenith_blade') {
+        if ((p.kind === 'water_bolt' || p.kind === 'rainbow_cat') && (p.bouncesLeft ?? 0) > 0) {
           p.bouncesLeft = (p.bouncesLeft ?? 1) - 1;
           if (tx !== prevTx) p.vx *= -1;
           else p.vy *= -1;
           p.x += p.vx * dt * 1.4;
           p.y += p.vy * dt * 1.4;
           sound.playMagic();
-        } else if (p.kind === 'star_rain' && p.y < this.player.y - 40) {
-          // Starfury stars fall past sky canopy toward target elevation
+        } else if ((p.kind === 'star_rain' || p.kind === 'star_wrath') && p.y < this.player.y - 40) {
+          // Starfury / Star Wrath meteors fall through upper sky tiles toward target elevation
         } else {
           if (p.kind === 'yarn_bomb' || p.kind === 'dynamite' || p.aoeRadius > 0) {
             this.detonateProjectile(p);
@@ -2448,6 +3299,10 @@ export class KotarriaEngine {
             } else {
               const dir = p.vx >= 0 ? 1 : -1;
               this.damageEnemy(enemy, p.damage, dir * p.knockback * 40, -130);
+              if (p.lifesteal && p.lifesteal > 0) {
+                const heal = Math.max(1, Math.round(p.damage * p.lifesteal));
+                this.player.hp = Math.min(this.player.maxHp, this.player.hp + heal);
+              }
               p.pierceLeft--;
               if (p.pierceLeft <= 0) {
                 this.projectiles.splice(i, 1);
@@ -2510,7 +3365,7 @@ export class KotarriaEngine {
           pickupDelay: 0.2,
         });
       }
-      recomputeLighting(this.world, this.timeOfDay);
+      recomputeLightingLocal(this.world, this.timeOfDay, Math.floor(p.x / TILE_SIZE), Math.floor(p.y / TILE_SIZE));
     }
 
     for (const enemy of this.enemies) {
@@ -2530,12 +3385,17 @@ export class KotarriaEngine {
     if (this.spawnTimer > 0) return;
 
     const isNight = this.timeOfDay >= 0.55 || this.timeOfDay < 0.08;
-    const depthTiles = Math.floor(this.player.y / TILE_SIZE) - this.world.surfaceHeights[Math.floor(this.player.x / TILE_SIZE)];
+    const ptx = Math.max(0, Math.min(this.world.width - 1, Math.floor(this.player.x / TILE_SIZE)));
+    const feetTileY = Math.round((this.player.y + this.player.height) / TILE_SIZE);
+    const depthTiles = feetTileY - this.world.surfaceHeights[ptx];
     const underground = depthTiles > 6;
+    const inUnderworld = feetTileY >= this.world.height - 52;
 
-    // Multi-knob difficulty ramp
-    const maxEnemies = Math.min(11, 4 + this.dayCount + (isNight ? 3 : 0));
-    this.spawnTimer = isNight ? 4.2 : 6.2;
+    const maxEnemies = Math.min(
+      14,
+      4 + this.dayCount + (isNight ? 3 : 0) + (this.alienInvasion.active ? 4 : 0),
+    );
+    this.spawnTimer = this.alienInvasion.active ? 2.4 : isNight ? 4.0 : 5.8;
 
     if (this.enemies.length >= maxEnemies) return;
 
@@ -2546,7 +3406,6 @@ export class KotarriaEngine {
       return;
     }
 
-    // Pick spawn offset away from player
     const side = Math.random() < 0.5 ? -1 : 1;
     const spawnWorldX = Math.max(
       4 * TILE_SIZE,
@@ -2558,30 +3417,64 @@ export class KotarriaEngine {
       ty = Math.max(4, Math.min(this.world.height - 4, Math.floor(this.player.y / TILE_SIZE) - 2));
     }
 
-    // Never spawn inside solid blocks or inside player's valid house
     if (isTileSolid(getTile(this.world, tx, ty))) return;
     if (isInsideValidHouse(this.world, spawnWorldX, ty * TILE_SIZE)) return;
 
     const biome = getBiomeAtX(tx, this.world.width);
     let kind: EnemyKind = 'slime';
-    if (underground) {
-      kind = Math.random() < 0.55 ? 'bat' : 'skeleton';
-    } else if (biome === 'crimson') {
-      const r = Math.random();
-      kind = r < 0.45 ? 'goblin' : r < 0.8 ? 'skeleton' : 'bat';
-    } else if (biome === 'snow') {
-      const r = Math.random();
-      kind = r < 0.5 ? 'slime' : r < 0.8 ? 'bat' : 'skeleton';
-    } else if (isNight) {
-      const r = Math.random();
-      kind = r < 0.45 ? 'goblin' : r < 0.8 ? 'skeleton' : 'bat';
+
+    // 1. Alien Invasion wave mobs
+    if (this.alienInvasion.active) {
+      kind = Math.random() < 0.65 ? 'alien_cat' : 'alien_drone';
     } else {
-      kind = Math.random() < 0.8 ? 'slime' : 'goblin';
+      // 2. Lunar Pillar nearby spawns matching minion
+      const nearbyPillar = this.enemies.find(
+        (e) =>
+          isPillarKind(e.kind) &&
+          e.aiState !== 'ko' &&
+          Math.abs(e.x - this.player.x) < 960,
+      );
+      if (nearbyPillar) {
+        kind =
+          nearbyPillar.kind === 'solar_pillar'
+            ? 'solar_corite'
+            : nearbyPillar.kind === 'vortex_pillar'
+              ? 'vortex_alien'
+              : nearbyPillar.kind === 'nebula_pillar'
+                ? 'nebula_floater'
+                : 'stardust_cell';
+      } else if (inUnderworld) {
+        const r = Math.random();
+        kind = r < 0.4 ? 'hellbat' : r < 0.72 ? 'fire_imp' : 'fire_demon';
+      } else if (underground) {
+        if (biome === 'snow') kind = Math.random() < 0.55 ? 'ice_bat' : 'skeleton';
+        else if (biome === 'crimson') kind = Math.random() < 0.55 ? 'crimera' : 'blood_crawler';
+        else kind = Math.random() < 0.55 ? 'bat' : 'skeleton';
+      } else if (biome === 'crimson') {
+        const r = Math.random();
+        kind = r < 0.4 ? 'crimera' : r < 0.75 ? 'face_monster' : 'blood_crawler';
+      } else if (biome === 'snow') {
+        const r = Math.random();
+        kind = r < 0.45 ? 'ice_slime' : r < 0.75 ? 'ice_bat' : 'frost_viking';
+      } else if (biome === 'desert') {
+        const r = Math.random();
+        kind = r < 0.4 ? 'sand_slime' : r < 0.75 ? 'antlion' : 'mummy';
+      } else if (biome === 'crystal') {
+        const r = Math.random();
+        kind = r < 0.65 ? 'pixie' : 'skeleton';
+      } else if (biome === 'ocean') {
+        kind = Math.random() < 0.7 ? 'sand_shark' : 'slime';
+      } else if (isNight) {
+        const r = Math.random();
+        kind = r < 0.45 ? 'goblin' : r < 0.8 ? 'skeleton' : 'bat';
+      } else {
+        kind = Math.random() < 0.8 ? 'slime' : 'goblin';
+      }
     }
 
-    const scale = 1 + (this.dayCount - 1) * 0.2 + (biome === 'crimson' ? 0.2 : 0);
+    const scale = 1 + (this.dayCount - 1) * 0.2 + (biome === 'crimson' || biome === 'crystal' ? 0.2 : 0);
     this.enemies.push(
-      createEnemy(this.nextEntityId++, kind, spawnWorldX, ty * TILE_SIZE, scale),
+      createEnemy(this.nextEntityId++, kind, spawnWorldX, ty * TILE_SIZE, scale, this.lang),
     );
   }
 
@@ -2640,15 +3533,16 @@ export class KotarriaEngine {
         }
       }
 
-      if (aiRes.spawnMinionKind && this.enemies.length < 14) {
+      if (aiRes.spawnMinionKind && this.enemies.length < 18) {
         const minion = createEnemy(
           this.nextEntityId++,
           aiRes.spawnMinionKind,
           enemy.x + enemy.width / 2,
           enemy.y,
           1,
+          this.lang,
         );
-        minion.vy = -260;
+        minion.vy = -220;
         minion.vx = (Math.random() - 0.5) * 180;
         this.enemies.push(minion);
       }
@@ -2684,15 +3578,19 @@ export class KotarriaEngine {
         )
       ) {
         const dir = this.player.x >= enemy.x ? 1 : -1;
-        this.damagePlayer(enemy.damage, dir);
+        this.damagePlayer(enemy.damage, dir, enemy.kind);
       }
     }
   }
 
-  private damagePlayer(rawDmg: number, knockDir: number): void {
+  private damagePlayer(rawDmg: number, knockDir: number, sourceKind?: EnemyKind): void {
     if (this.godMode) return;
     const bonuses = computeEquipmentBonuses(this.equipment);
-    const totalDefense = this.player.defense + bonuses.defense;
+    const fxMods = computeEffectModifiers(this.player.effects);
+    const totalDefense = Math.max(
+      0,
+      Math.round((this.player.defense + bonuses.defense + fxMods.defenseBonus) * fxMods.defenseMult),
+    );
     const dmg = computeDamageAfterDefense(rawDmg, totalDefense);
     this.player.hp = Math.max(0, this.player.hp - dmg);
     this.player.invulnTimer = 0.75;
@@ -2703,6 +3601,23 @@ export class KotarriaEngine {
     }
     this.trauma = Math.min(1, this.trauma + 0.55);
     this.hitstopTimer = 0.04;
+
+    if (sourceKind && !bonuses.hasDebuffImmune && Math.random() < 0.32) {
+      const fireImmune = Boolean(bonuses.hasFireImmune || fxMods.fireImmune);
+      if ((sourceKind === 'fire_imp' || sourceKind === 'fire_demon' || sourceKind === 'hellbat' || sourceKind === 'solar_corite') && !fireImmune) {
+        applyStatusEffect(this.player.effects, 'on_fire', 5);
+      } else if (sourceKind === 'slime' || sourceKind === 'plantera' || sourceKind === 'queen_bee' || sourceKind === 'stardust_cell') {
+        applyStatusEffect(this.player.effects, 'poisoned', 6);
+      } else if (sourceKind === 'ice_slime' || sourceKind === 'ice_bat' || sourceKind === 'deerclops') {
+        applyStatusEffect(this.player.effects, 'slow', 5);
+      } else if (sourceKind === 'brain_cthulhu' || sourceKind === 'jester_cat' || sourceKind === 'nebula_floater') {
+        applyStatusEffect(this.player.effects, 'confusion', 4);
+      } else if (sourceKind === 'mummy' || sourceKind === 'skeleton' || sourceKind === 'crimera') {
+        applyStatusEffect(this.player.effects, 'weak', 7);
+      } else if (sourceKind === 'face_monster' || sourceKind === 'skele_cat') {
+        applyStatusEffect(this.player.effects, 'broken_armor', 6);
+      }
+    }
 
     sound.playPlayerHurt();
     this.spawnFloatingText(
@@ -2729,6 +3644,8 @@ export class KotarriaEngine {
   private stepDrops(dt: number): void {
     const pcx = this.player.x + this.player.width / 2;
     const pcy = this.player.y + this.player.height / 2;
+    const fxMods = computeEffectModifiers(this.player.effects);
+    const magnetRange = 84 * fxMods.magnetMult;
 
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const d = this.drops[i];
@@ -2751,7 +3668,7 @@ export class KotarriaEngine {
       d.vy = box.vy;
 
       const dist = Math.hypot(pcx - d.x, pcy - d.y);
-      const canMagnet = !d.noAutoMagnet && dist < 84;
+      const canMagnet = !d.noAutoMagnet && dist < magnetRange;
       const canDirectPickup = d.pickupDelay <= 0 && dist < 28;
       if (d.pickupDelay <= 0 && (canMagnet || canDirectPickup)) {
         if (canMagnet && dist >= 28) {
@@ -2764,8 +3681,8 @@ export class KotarriaEngine {
           const leftover = addItemToInventory(this.hotbar, this.backpack, d.itemId, d.count);
           if (leftover < d.count) {
             sound.playPickup();
-            const def = ITEMS[d.itemId];
-            this.spawnFloatingText(d.x, d.y - 10, `+${d.count - leftover} ${def?.name ?? ''}`, '#bae6fd');
+            const itemName = getItemName(d.itemId, this.lang);
+            this.spawnFloatingText(d.x, d.y - 10, `+${d.count - leftover} ${itemName}`, '#bae6fd');
             this.syncActiveWeapon();
             this.emitHud();
           }
@@ -2821,6 +3738,7 @@ export class KotarriaEngine {
       selectedItemId: slot ? slot.itemId : null,
       textures: this.textures,
       equipment: this.equipment,
+      language: this.lang,
       stoolSpeech: this.stoolSpeech
         ? { text: this.stoolSpeech.text, stage: this.stoolSpeech.stage }
         : null,
@@ -2853,7 +3771,7 @@ export class KotarriaEngine {
     sound.playPotBreak();
     sound.playCoin();
     this.spawnBurst(wx, wy, '#d97706', 14, 150);
-    this.spawnFloatingText(wx, wy - 12, `+${loot.coins} монет`, '#facc15');
+    this.spawnFloatingText(wx, wy - 12, this.t(`+${loot.coins} coins`, `+${loot.coins} монет`), '#facc15');
     for (const drop of loot.items) {
       this.drops.push({
         id: this.nextEntityId++,
@@ -2900,7 +3818,12 @@ export class KotarriaEngine {
       return;
     }
     if (!this.hasInventoryItem('grappling_hook')) {
-      this.showToast('Нужен Крюк-кошка (купи у Торговца Бориса или найди в сундуке)!');
+      this.showToast(
+        this.t(
+          'Need a Grappling Hook (buy from Merchant Boris or loot a chest)!',
+          'Нужен Крюк-кошка (купи у Торговца Бориса или найди в сундуке)!',
+        ),
+      );
       return;
     }
     const { wx, wy } = this.getHoverWorldTile();
@@ -2972,12 +3895,12 @@ export class KotarriaEngine {
     const res = toggleDoorAtTile(this.world, this.player, door.tx, door.ty);
     if (res.toggled) {
       sound.playPlace();
-      recomputeLighting(this.world, this.timeOfDay);
+      recomputeLightingLocal(this.world, this.timeOfDay, door.tx, door.ty);
       this.emitHud(true);
       return true;
     }
     if (res.blockedByPlayer) {
-      this.showToast('Отойди от проёма, чтобы закрыть дверь!');
+      this.showToast(this.t('Step away from doorway to close the door!', 'Отойди от проёма, чтобы закрыть дверь!'));
       this.emitHud(true);
     }
     return false;
@@ -3046,20 +3969,20 @@ export class KotarriaEngine {
     if (!entry) return false;
 
     if (this.player.coins < entry.price) {
-      this.showToast(`Не хватает монет (нужно ${entry.price})!`);
+      this.showToast(this.t(`Not enough coins (need ${entry.price})!`, `Не хватает монет (нужно ${entry.price})!`));
       return false;
     }
 
     const leftover = addItemToInventory(this.hotbar, this.backpack, itemId, 1);
     if (leftover > 0) {
-      this.showToast('Рюкзак переполнен!');
+      this.showToast(this.t('Backpack is full!', 'Рюкзак переполнен!'));
       return false;
     }
 
     this.player.coins -= entry.price;
     sound.playCoin();
-    const def = ITEMS[itemId];
-    this.showToast(`Куплено у ${npc.name}: ${def?.name ?? itemId}`);
+    const itemName = getItemName(itemId, this.lang);
+    this.showToast(this.t(`Bought from ${npc.name}: ${itemName}`, `Куплено у ${npc.name}: ${itemName}`));
     this.syncActiveWeapon();
     this.emitHud(true);
     return true;
@@ -3070,7 +3993,7 @@ export class KotarriaEngine {
     const npc = this.npcs.find((n) => n.id === this.activeNpcId && n.kind === 'nurse');
     if (!npc) return false;
     if (this.player.hp >= this.player.maxHp) {
-      this.showToast('Здоровье котика уже полное!');
+      this.showToast(this.t('Your health is already full!', 'Здоровье котика уже полное!'));
       return false;
     }
     const cost = this.getNurseHealCost();
@@ -3080,7 +4003,11 @@ export class KotarriaEngine {
     this.player.mana = this.player.maxMana + bonuses.maxManaBonus;
     sound.playHeal();
     this.spawnBurst(this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, '#4ade80', 14, 150);
-    this.showToast(cost > 0 ? `Медсестра Алина вылечила кота за ${cost} монет!` : 'Медсестра Алина вылечила кота бесплатно!');
+    this.showToast(
+      cost > 0
+        ? this.t(`${npc.name} healed you for ${cost} coins!`, `${npc.name} вылечила кота за ${cost} монет!`)
+        : this.t(`${npc.name} healed you for free!`, `${npc.name} вылечила кота бесплатно!`),
+    );
     this.emitHud(true);
     return true;
   }
@@ -3095,12 +4022,22 @@ export class KotarriaEngine {
     );
     const biome = getBiomeAtX(pxTile, this.world.width);
     const isNight = this.timeOfDay >= 0.55 || this.timeOfDay < 0.08;
-    const boss = this.enemies.find((e) => isBossKind(e.kind) && e.aiState !== 'ko');
+    const liveBosses = this.enemies.filter((e) => isBossKind(e.kind) && e.aiState !== 'ko');
+    const activeBosses: HudBossBar[] = liveBosses.map((b) => ({
+      id: b.id,
+      kind: b.kind,
+      name: getEnemyName(b, this.lang),
+      hp: Math.round(b.hp),
+      maxHp: b.maxHp,
+      shield: b.shield,
+      maxShield: b.maxShield,
+    }));
+    const boss = liveBosses[0] ?? null;
     const nearbyStool = this.findNearestStoolTile(4.5) !== null;
     const nearbyChest = this.findNearestChestTile(4.5);
     const nearbyDoor = this.findNearestDoorTile(3.2);
     const nearbyNpcEntity = this.findNearestNpc(118);
-    const roomInspection = inspectRoomHousing(this.world, pxTile, pyTile);
+    const roomInspection = inspectRoomHousing(this.world, pxTile, pyTile, this.lang);
     const ownedAccessories = this.getOwnedAccessories();
 
     const activeChest =
@@ -3123,15 +4060,19 @@ export class KotarriaEngine {
       ? {
           id: activeNpcEntity.id,
           kind: activeNpcEntity.kind,
-          name: activeNpcEntity.name,
-          title: activeNpcEntity.title,
-          quote: getNpcDialogue(activeNpcEntity, {
-            isNight,
-            biome,
-            validHouseCount: this.validHouseCount,
-            hasBoss: Boolean(boss),
-            stoolPetted: this.stoolPetted,
-          }),
+          name: getNpcDisplay(activeNpcEntity.kind, this.lang).name,
+          title: getNpcDisplay(activeNpcEntity.kind, this.lang).title,
+          quote: getNpcDialogue(
+            activeNpcEntity,
+            {
+              isNight,
+              biome,
+              validHouseCount: this.validHouseCount,
+              hasBoss: liveBosses.length > 0,
+              stoolPetted: this.stoolPetted,
+            },
+            this.lang,
+          ),
           settled: activeNpcEntity.homeTileX !== null,
           shopItems: getNpcShopItems(activeNpcEntity.kind),
           canHeal: activeNpcEntity.kind === 'nurse',
@@ -3140,6 +4081,11 @@ export class KotarriaEngine {
       : null;
 
     const bonuses = computeEquipmentBonuses(this.equipment);
+    const fxMods = computeEffectModifiers(this.player.effects);
+    const totalDefense = Math.max(
+      0,
+      Math.round((this.player.defense + bonuses.defense + fxMods.defenseBonus) * fxMods.defenseMult),
+    );
     const equipmentCopy: EquipmentState = {
       helmet: this.equipment.helmet ? { ...this.equipment.helmet } : null,
       chestplate: this.equipment.chestplate ? { ...this.equipment.chestplate } : null,
@@ -3147,13 +4093,29 @@ export class KotarriaEngine {
       accessories: this.equipment.accessories.map((a) => (a ? { ...a } : null)),
     };
 
+    const pillarsAlive = this.enemies
+      .filter((e) => isPillarKind(e.kind) && e.aiState !== 'ko')
+      .map((p) => ({
+        kind: p.kind,
+        name: getEnemyName(p, this.lang),
+        tx: Math.floor((p.x + p.width / 2) / TILE_SIZE),
+        shield: Math.round(p.shield ?? 0),
+        maxShield: p.maxShield ?? 120,
+        hp: Math.round(p.hp),
+        maxHp: p.maxHp,
+      }));
+    const saucerAlive = this.enemies.some(
+      (e) => e.kind === 'martian_saucer' && e.aiState !== 'ko',
+    );
+
     return {
       phase: this.phase,
+      language: this.lang,
       hp: Math.round(this.player.hp),
       maxHp: this.player.maxHp,
       mana: Math.round(this.player.mana),
       maxMana: this.player.maxMana + bonuses.maxManaBonus,
-      defense: this.player.defense + bonuses.defense,
+      defense: totalDefense,
       coins: this.player.coins,
       dayCount: this.dayCount,
       timeOfDay: this.timeOfDay,
@@ -3177,13 +4139,44 @@ export class KotarriaEngine {
       backpack: this.backpack.map((s) => (s ? { ...s } : null)),
       equipment: equipmentCopy,
       equipmentBonuses: bonuses,
+      activeEffects: this.player.effects.map((e) => {
+        const def = STATUS_EFFECT_DEFS[e.id];
+        return {
+          id: e.id,
+          name: getEffectName(e.id, this.lang),
+          description: getEffectDescription(e.id, this.lang),
+          remaining: e.duration,
+          maxDuration: e.maxDuration,
+          isDebuff: e.isDebuff,
+          color: def.color,
+        };
+      }),
+      activeSaveId: this.activeSaveId,
       wingFuel: this.player.wingFuel,
       wingFuelMax: MAX_WING_FUEL,
       selectedSlot: this.selectedSlot,
       activeToolMode: this.activeToolMode,
       stats: { ...this.stats },
       enemyCount: this.enemies.length,
-      bossInfo: boss ? { name: boss.name, hp: Math.round(boss.hp), maxHp: boss.maxHp } : null,
+      bossInfo: boss
+        ? {
+            name: getEnemyName(boss, this.lang),
+            hp: Math.round(boss.hp),
+            maxHp: boss.maxHp,
+          }
+        : null,
+      activeBosses,
+      lunarEvent: {
+        active: this.lunarEvent.active || pillarsAlive.length > 0,
+        pillarsAlive,
+        moonLordSpawned: this.lunarEvent.moonLordSpawned,
+      },
+      alienInvasion: {
+        active: this.alienInvasion.active,
+        defeated: this.alienInvasion.defeated,
+        target: this.alienInvasion.target,
+        saucerAlive,
+      },
       toastMessage: this.toastMessage,
       godMode: this.godMode,
       nearbyStool,
@@ -3193,15 +4186,15 @@ export class KotarriaEngine {
         ? {
             id: nearbyNpcEntity.id,
             kind: nearbyNpcEntity.kind,
-            name: nearbyNpcEntity.name,
-            title: nearbyNpcEntity.title,
+            name: getNpcDisplay(nearbyNpcEntity.kind, this.lang).name,
+            title: getNpcDisplay(nearbyNpcEntity.kind, this.lang).title,
           }
         : null,
       npcsSummary: this.npcs.map((n) => ({
         id: n.id,
         kind: n.kind,
-        name: n.name,
-        title: n.title,
+        name: getNpcDisplay(n.kind, this.lang).name,
+        title: getNpcDisplay(n.kind, this.lang).title,
         settled: n.homeTileX !== null,
         homeTileX: n.homeTileX,
         homeTileY: n.homeTileY,
@@ -3230,13 +4223,18 @@ export class KotarriaEngine {
       snap.equipment.greaves?.itemId ?? '',
       snap.equipment.accessories.map((a) => a?.itemId ?? '').join(','),
     ].join(';');
+    const effectsKey = snap.activeEffects
+      .map((e) => `${e.id}:${Math.ceil(e.remaining)}`)
+      .join(',');
     const chestKey = snap.activeChest
       ? `${snap.activeChest.tx},${snap.activeChest.ty}:${snap.activeChest.items
           .map((s) => (s ? `${s.itemId}:${s.count}` : ''))
           .join(',')}`
       : '';
+    const bossKey = snap.activeBosses.map((b) => `${b.id}:${b.hp}:${b.shield ?? 0}`).join(',');
     const key = [
       snap.phase,
+      snap.language,
       snap.worldVariant,
       snap.hp,
       snap.maxHp,
@@ -3257,11 +4255,15 @@ export class KotarriaEngine {
       snap.selectedSlot,
       snap.activeToolMode,
       snap.toastMessage ?? '',
-      snap.bossInfo ? `${snap.bossInfo.name}:${snap.bossInfo.hp}` : '',
+      bossKey,
+      `${snap.lunarEvent.active}:${snap.lunarEvent.pillarsAlive.map((p) => `${p.kind}:${p.shield}:${p.hp}`).join(',')}`,
+      `${snap.alienInvasion.active}:${snap.alienInvasion.defeated}:${snap.alienInvasion.saucerAlive}`,
       snap.nearbyStations.join(','),
       hotbarKey,
       backpackKey,
       equipKey,
+      effectsKey,
+      snap.activeSaveId ?? '',
       snap.stats.itemsCrafted,
       snap.stats.monstersKilled,
       snap.stats.blocksPlaced,

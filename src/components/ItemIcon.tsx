@@ -32,10 +32,7 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
     );
   }
 
-  if (
-    item.textureSrc === '/assets/aistudio/wait_518dc071.jpg' ||
-    item.textureSrc === '/assets/aistudio/chine_5a03a968.jpg'
-  ) {
+  if (item.textureSrc) {
     return (
       <div
         style={{ width: size, height: size }}
@@ -91,6 +88,34 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
 
   // Melee Swords (non-texture)
   if (item.weaponKind === 'melee') {
+    if (item.id === 'zenith') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <defs>
+            <linearGradient id="zenithBlade" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0%" stopColor="#38bdf8" />
+              <stop offset="35%" stopColor="#34d399" />
+              <stop offset="70%" stopColor="#a855f7" />
+              <stop offset="100%" stopColor="#fde047" />
+            </linearGradient>
+          </defs>
+          <polygon points="21,3 18,11 11,18 6,13 13,6" fill="url(#zenithBlade)" stroke="#0f172a" strokeWidth="1.4" strokeLinejoin="round" />
+          <line x1="19" y1="5" x2="10" y2="14" stroke="#ffffff" strokeWidth="1.4" strokeLinecap="round" />
+          <line x1="7" y1="11" x2="13" y2="17" stroke="#facc15" strokeWidth="3" strokeLinecap="round" />
+          <line x1="4" y1="20" x2="8.5" y2="15.5" stroke="#1e293b" strokeWidth="2.8" strokeLinecap="round" />
+        </svg>
+      );
+    }
+    if (item.id === 'star_wrath' || item.id === 'enchanted_sword') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <polygon points="20,4 17,11 11,17 7,13 13,7" fill={item.color} stroke="#0f172a" strokeWidth="1.4" strokeLinejoin="round" />
+          <polygon points="16.5,5.5 17.8,7.5 19.8,7.8 18,9 18.4,11 16.5,9.8 14.6,11 15,9 13.2,7.8 15.2,7.5" fill={item.accent} />
+          <line x1="8" y1="12" x2="12" y2="16" stroke={item.accent} strokeWidth="3" strokeLinecap="round" />
+          <line x1="5" y1="19" x2="9" y2="15" stroke="#451a03" strokeWidth="2.5" strokeLinecap="round" />
+        </svg>
+      );
+    }
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
         <polygon
@@ -159,13 +184,45 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
     );
   }
 
-  // Minishark Gun
+  // Minishark Gun & Atomic Launcher
   if (item.weaponKind === 'gun') {
+    if (item.id === 'atomic_launcher') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <rect x="3" y="8" width="14" height="7" rx="2" fill={item.color} stroke="#0f172a" strokeWidth="1.4" />
+          <polygon points="17,8 22,11.5 17,15" fill={item.accent} stroke="#0f172a" strokeWidth="1.2" />
+          <rect x="6" y="15" width="3.5" height="5" rx="1" fill="#334155" />
+          <circle cx="9.5" cy="11.5" r="1.8" fill="#0f172a" />
+        </svg>
+      );
+    }
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
         <path d="M3 10 Q11 6 19 10 L21 10 L21 13 L15 13 L12 16 L6 14 L4 18 L3 17 Z" fill={item.color} stroke="#0f172a" strokeWidth="1.3" />
         <polygon points="10,8 13,4 14,8" fill="#64748b" stroke="#0f172a" strokeWidth="1" />
         <circle cx="16" cy="10.8" r="1" fill="#f8fafc" />
+      </svg>
+    );
+  }
+
+  // Jester Cards & Vampire Knives
+  if (item.id === 'jester_cards') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <rect x="4" y="5" width="9" height="14" rx="1.5" transform="rotate(-12 8.5 12)" fill="#ef4444" stroke="#0f172a" strokeWidth="1.2" />
+        <rect x="10" y="5" width="9" height="14" rx="1.5" transform="rotate(10 14.5 12)" fill="#2563eb" stroke="#0f172a" strokeWidth="1.2" />
+        <polygon points="14.5,9 16.5,12 14.5,15 12.5,12" fill="#facc15" />
+      </svg>
+    );
+  }
+  if (item.id === 'vampire_knives') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <polygon points="9,4 11,13 7,13" fill="#dc2626" stroke="#0f172a" strokeWidth="1.1" transform="rotate(-18 9 12)" />
+        <polygon points="12,3 14.5,13 9.5,13" fill="#ef4444" stroke="#0f172a" strokeWidth="1.2" />
+        <polygon points="15,4 17,13 13,13" fill="#dc2626" stroke="#0f172a" strokeWidth="1.1" transform="rotate(18 15 12)" />
+        <rect x="9" y="13" width="6" height="2.2" fill="#fca5a5" stroke="#0f172a" strokeWidth="1" />
+        <rect x="10.8" y="15" width="2.4" height="5" fill="#450a0a" />
       </svg>
     );
   }
@@ -227,19 +284,30 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
         </svg>
       );
     }
-    if (item.id === 'hermes_boots') {
+    if (item.id === 'hermes_boots' || item.id === 'terraspark_boots') {
       return (
         <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
           <path d="M7 5 L13 5 L13 14 L19 15 L19 19 L7 19 Z" fill={item.color} stroke="#0f172a" strokeWidth="1.4" strokeLinejoin="round" />
           <path d="M4 9 L9 7 L8 11 Z" fill={item.accent} stroke="#0f172a" strokeWidth="1" />
+          {item.id === 'terraspark_boots' && (
+            <path d="M7 18 L19 18" stroke="#f97316" strokeWidth="2.2" strokeLinecap="round" />
+          )}
         </svg>
       );
     }
-    if (item.id === 'cobalt_shield') {
+    if (item.id === 'cobalt_shield' || item.id === 'ankh_shield') {
       return (
         <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
           <path d="M5 4 L19 4 L19 12 Q19 18 12 21 Q5 18 5 12 Z" fill={item.color} stroke="#0f172a" strokeWidth="1.5" />
-          <path d="M12 7 L15.5 11 L12 16 L8.5 11 Z" fill={item.accent} />
+          {item.id === 'ankh_shield' ? (
+            <>
+              <circle cx="12" cy="9" r="2.2" fill="none" stroke={item.accent} strokeWidth="1.8" />
+              <line x1="12" y1="11" x2="12" y2="17" stroke={item.accent} strokeWidth="2" strokeLinecap="round" />
+              <line x1="9" y1="13" x2="15" y2="13" stroke={item.accent} strokeWidth="2" strokeLinecap="round" />
+            </>
+          ) : (
+            <path d="M12 7 L15.5 11 L12 16 L8.5 11 Z" fill={item.accent} />
+          )}
         </svg>
       );
     }
@@ -294,6 +362,14 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
         <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
           <polygon points="12,2 15,9 22,12 15,15 12,22 9,15 2,12 9,9" fill={item.color} stroke="#0f172a" strokeWidth="1.2" />
           <circle cx="12" cy="12" r="3" fill={item.accent} />
+        </svg>
+      );
+    }
+    if (item.id === 'bounty_badge') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <polygon points="12,2 14.8,8.5 21.5,9.2 16.4,13.8 18,20.5 12,16.8 6,20.5 7.6,13.8 2.5,9.2 9.2,8.5" fill="#fbbf24" stroke="#78350f" strokeWidth="1.3" />
+          <circle cx="12" cy="12" r="3" fill="#dc2626" />
         </svg>
       );
     }
@@ -433,6 +509,43 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
       </svg>
     );
   }
+  if (item.id === 'campfire_item') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <rect x="4" y="16" width="16" height="4" rx="1.2" fill="#78350f" stroke="#0f172a" strokeWidth="1.2" />
+        <path d="M12 4 C16 9 17 13 12 16 C7 13 8 9 12 4 Z" fill="#f97316" stroke="#7c2d12" strokeWidth="1" />
+        <path d="M12 9 C14 11 14.5 13.5 12 15.5 C9.5 13.5 10 11 12 9 Z" fill="#fde047" />
+      </svg>
+    );
+  }
+  if (item.id === 'heart_lantern_item') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <line x1="12" y1="2" x2="12" y2="6" stroke="#94a3b8" strokeWidth="2" />
+        <path d="M12 20 C6.5 15.5 5 11.5 5 9 A3.8 3.8 0 0 1 12 7.5 A3.8 3.8 0 0 1 19 9 C19 11.5 17.5 15.5 12 20 Z" fill="#ec4899" stroke="#0f172a" strokeWidth="1.3" />
+        <circle cx="9.5" cy="9.5" r="1.4" fill="#fbcfe8" />
+      </svg>
+    );
+  }
+  if (item.id === 'sunflower_item') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <line x1="12" y1="11" x2="12" y2="21" stroke="#16a34a" strokeWidth="2.6" strokeLinecap="round" />
+        <circle cx="12" cy="8.5" r="5.5" fill="#facc15" stroke="#ca8a04" strokeWidth="1.2" />
+        <circle cx="12" cy="8.5" r="2.7" fill="#78350f" />
+      </svg>
+    );
+  }
+  if (item.id === 'crimson_altar_item') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <rect x="4" y="11" width="16" height="8" rx="2" fill="#7f1d1d" stroke="#0f172a" strokeWidth="1.3" />
+        <circle cx="8" cy="10" r="2.3" fill="#ef4444" stroke="#0f172a" strokeWidth="1" />
+        <circle cx="12" cy="8.5" r="2.6" fill="#f87171" stroke="#0f172a" strokeWidth="1" />
+        <circle cx="16" cy="10" r="2.3" fill="#ef4444" stroke="#0f172a" strokeWidth="1" />
+      </svg>
+    );
+  }
 
   // Treasure Chest
   if (item.id === 'chest_item') {
@@ -538,6 +651,16 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
         </svg>
       );
     }
+    if (item.id === 'summon_pillars') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <rect x="4" y="4" width="7" height="7" rx="1.5" fill="#f97316" stroke="#0f172a" strokeWidth="1.1" />
+          <rect x="13" y="4" width="7" height="7" rx="1.5" fill="#10b981" stroke="#0f172a" strokeWidth="1.1" />
+          <rect x="4" y="13" width="7" height="7" rx="1.5" fill="#d946ef" stroke="#0f172a" strokeWidth="1.1" />
+          <rect x="13" y="13" width="7" height="7" rx="1.5" fill="#38bdf8" stroke="#0f172a" strokeWidth="1.1" />
+        </svg>
+      );
+    }
     if (item.id === 'summon_cultist' || item.id === 'summon_moon_lord') {
       return (
         <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
@@ -611,15 +734,35 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
         </svg>
       );
     }
+    if (item.id === 'red_potion') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <rect x="9.5" y="2.5" width="5" height="2.5" rx="0.8" fill="#cbd5e1" stroke="#0f172a" strokeWidth="1" />
+          <path d="M9 5 L15 5 L15 8 L19 13 L18 19 Q18 21 16 21 L8 21 Q6 21 6 19 L5 13 L9 8 Z" fill="#dc2626" stroke="#0f172a" strokeWidth="1.4" />
+          <text x="12" y="17" textAnchor="middle" fill="#fef08a" fontSize="8" fontWeight="900">?</text>
+        </svg>
+      );
+    }
+    if (item.id === 'milk_potion') {
+      return (
+        <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+          <rect x="9" y="3" width="6" height="3" rx="1" fill="#38bdf8" stroke="#0f172a" strokeWidth="1.1" />
+          <rect x="7" y="6" width="10" height="15" rx="2.5" fill="#f8fafc" stroke="#0f172a" strokeWidth="1.4" />
+          <rect x="7.5" y="11.5" width="9" height="4" fill="#38bdf8" opacity="0.85" />
+          <circle cx="10" cy="9" r="1.2" fill="#e2e8f0" />
+        </svg>
+      );
+    }
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <rect x="9.5" y="2.5" width="5" height="2" rx="0.6" fill="#b45309" />
         <path
-          d="M9 4 L15 4 L15 8 L18 13 L18 19 Q18 20 17 20 L7 20 Q6 20 6 19 L6 13 L9 8 Z"
+          d="M9 4.5 L15 4.5 L15 8 L18 13 L18 19 Q18 20 17 20 L7 20 Q6 20 6 19 L6 13 L9 8 Z"
           fill={item.color}
           stroke="#0f172a"
           strokeWidth="1.4"
         />
-        <rect x="8" y="13" width="8" height="5" rx="1" fill={item.accent} />
+        <rect x="8" y="12.5" width="8" height="5.5" rx="1" fill={item.accent} />
       </svg>
     );
   }
@@ -667,6 +810,34 @@ export const ItemIcon: React.FC<ItemIconProps> = ({ itemId, size = 28 }) => {
       <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
         <rect x="8" y="3" width="8" height="18" rx="1" fill={item.color} stroke="#0f172a" strokeWidth="1.4" />
         <line x1="11" y1="4" x2="11" y2="20" stroke={item.accent} strokeWidth="1.5" />
+      </svg>
+    );
+  }
+
+  // Celestial Fragments
+  if (
+    item.id === 'solar_fragment' ||
+    item.id === 'vortex_fragment' ||
+    item.id === 'nebula_fragment' ||
+    item.id === 'stardust_fragment'
+  ) {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <polygon points="12,2 19,10 15,21 9,21 5,10" fill={item.color} stroke="#0f172a" strokeWidth="1.4" />
+        <polygon points="12,5 15.5,10 12,17 8.5,10" fill={item.accent} />
+      </svg>
+    );
+  }
+
+  // Cactus Block
+  if (item.id === 'cactus_block') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className="pointer-events-none">
+        <rect x="6" y="4" width="12" height="16" rx="3" fill={item.color} stroke="#0f172a" strokeWidth="1.4" />
+        <line x1="9" y1="6" x2="9" y2="18" stroke={item.accent} strokeWidth="1.4" />
+        <line x1="15" y1="6" x2="15" y2="18" stroke={item.accent} strokeWidth="1.4" />
+        <circle cx="5" cy="9" r="1" fill="#ecfccb" />
+        <circle cx="19" cy="13" r="1" fill="#ecfccb" />
       </svg>
     );
   }

@@ -1,8 +1,9 @@
 import React from 'react';
 import { CheckCircle2, Coins, HeartPulse, Home, ShoppingBag, X, XCircle } from 'lucide-react';
-import { ITEMS } from '../game/catalog';
+import { ITEMS, getItemDescription, getItemName } from '../game/catalog';
+import { UI_TEXT, tr } from '../game/i18n';
 import { NPC_TEMPLATES } from '../game/npc';
-import { HousingRoomReport, NpcKind } from '../game/types';
+import { HousingRoomReport, Language, NpcKind } from '../game/types';
 import { ItemIcon } from './ItemIcon';
 
 interface NpcModalProps {
@@ -17,6 +18,7 @@ interface NpcModalProps {
     canHeal: boolean;
     healCost: number;
   };
+  language: Language;
   coins: number;
   hp: number;
   maxHp: number;
@@ -27,9 +29,19 @@ interface NpcModalProps {
   onClose: () => void;
 }
 
-const NpcPortrait: React.FC<{ kind: NpcKind }> = ({ kind }) => {
+const NpcPortrait: React.FC<{ kind: NpcKind; alt: string }> = ({ kind, alt }) => {
   const tpl = NPC_TEMPLATES[kind];
   const app = tpl.appearance;
+  if (app.textureSrc) {
+    return (
+      <img
+        src={app.textureSrc}
+        alt={alt}
+        referrerPolicy="no-referrer"
+        className="w-full h-full object-cover rounded-xl"
+      />
+    );
+  }
   return (
     <svg viewBox="0 0 40 48" width={46} height={54} className="shrink-0">
       <rect x="11" y="25" width="18" height="17" rx="4" fill={app.shirt} stroke="#0f172a" strokeWidth="1.5" />
@@ -71,6 +83,7 @@ const NpcPortrait: React.FC<{ kind: NpcKind }> = ({ kind }) => {
 
 export const NpcModal: React.FC<NpcModalProps> = ({
   npc,
+  language,
   coins,
   hp,
   maxHp,
@@ -80,6 +93,7 @@ export const NpcModal: React.FC<NpcModalProps> = ({
   onHealNurse,
   onClose,
 }) => {
+  const t = UI_TEXT[language];
   const needsHeal = hp < maxHp;
 
   return (
@@ -87,14 +101,14 @@ export const NpcModal: React.FC<NpcModalProps> = ({
       className="fixed inset-0 z-30 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70"
       role="dialog"
       aria-modal="true"
-      aria-label={`Разговор с ${npc.title} ${npc.name}`}
+      aria-label={`${npc.title} ${npc.name}`}
     >
       <div className="w-full max-w-2xl bg-[#10192b] border border-amber-400/50 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
         {/* Header */}
         <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-700/80 bg-[#0b1322]">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-slate-900 border border-amber-400/40 flex items-center justify-center overflow-hidden">
-              <NpcPortrait kind={npc.kind} />
+            <div className="w-12 h-12 rounded-xl bg-slate-900 border border-amber-400/40 flex items-center justify-center overflow-hidden shrink-0">
+              <NpcPortrait kind={npc.kind} alt={`${npc.title} ${npc.name}`} />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -109,16 +123,18 @@ export const NpcModal: React.FC<NpcModalProps> = ({
                   }`}
                 >
                   <Home className="w-3 h-3" />
-                  {npc.settled ? 'Живёт в доме' : 'Без своего дома'}
+                  {npc.settled ? t.npcSettled : t.npcHomeless}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-300 mt-0.5">
                 <Coins className="w-3.5 h-3.5 text-amber-400" />
                 <span className="font-mono-num font-bold text-amber-200">
-                  Монеты котика: {coins}
+                  {t.npcCoins}: {coins}
                 </span>
                 <span className="text-slate-500">·</span>
-                <span className="text-slate-400">Построено домов: {validHouseCount}</span>
+                <span className="text-slate-400">
+                  {t.npcHousesBuilt}: {validHouseCount}
+                </span>
               </div>
             </div>
           </div>
@@ -126,7 +142,7 @@ export const NpcModal: React.FC<NpcModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Закрыть диалог с жителем"
+            aria-label={t.closeBtn}
             className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -137,25 +153,28 @@ export const NpcModal: React.FC<NpcModalProps> = ({
         <div className="p-4 sm:p-5 overflow-y-auto game-scroll space-y-4">
           {/* Dialogue bubble */}
           <div className="bg-[#0b1322] border border-slate-700 rounded-xl p-3.5 text-sm text-slate-100 leading-relaxed">
-            «{npc.quote}»
+            “{npc.quote}”
           </div>
 
           {/* Guide Housing Inspector */}
           {npc.kind === 'guide' && roomReport && (
             <div className="bg-[#0b1322] border border-sky-500/35 rounded-xl p-3.5 space-y-2">
               <div className="flex items-center justify-between text-xs font-semibold text-sky-200">
-                <span>Проверка комнаты для жилья (вокруг котика)</span>
+                <span>{t.npcRoomCheck}</span>
                 <span className={roomReport.hasHouseForNpc ? 'text-emerald-300' : 'text-amber-300'}>
-                  {roomReport.hasHouseForNpc ? 'Подходит для жителя!' : 'Не завершена'}
+                  {roomReport.hasHouseForNpc ? t.npcRoomOk : t.npcRoomMissing}
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-[11px]">
                 {[
-                  { label: 'Стены и фон', ok: roomReport.hasWall && roomReport.interiorCount >= 6 },
-                  { label: 'Свет', ok: roomReport.hasLight },
-                  { label: 'Дверь', ok: roomReport.hasDoor },
-                  { label: 'Стол', ok: roomReport.hasTable },
-                  { label: 'Стул', ok: roomReport.hasSeat },
+                  {
+                    label: tr(language, 'Walls & Frame', 'Стены и фон'),
+                    ok: roomReport.hasWall && roomReport.interiorCount >= 6,
+                  },
+                  { label: tr(language, 'Light', 'Свет'), ok: roomReport.hasLight },
+                  { label: tr(language, 'Door', 'Дверь'), ok: roomReport.hasDoor },
+                  { label: tr(language, 'Table', 'Стол'), ok: roomReport.hasTable },
+                  { label: tr(language, 'Chair', 'Стул'), ok: roomReport.hasSeat },
                 ].map((req) => (
                   <div
                     key={req.label}
@@ -184,10 +203,10 @@ export const NpcModal: React.FC<NpcModalProps> = ({
                 <HeartPulse className="w-5 h-5 text-rose-400 shrink-0" />
                 <div>
                   <div className="text-sm font-semibold text-rose-100">
-                    Полное лечение ({hp}/{maxHp} HP)
+                    {t.npcFullHeal} ({hp}/{maxHp} HP)
                   </div>
                   <div className="text-xs text-rose-200/80">
-                    Восстановит всё здоровье и ману мгновенно.
+                    {t.npcHealDesc}
                   </div>
                 </div>
               </div>
@@ -202,10 +221,10 @@ export const NpcModal: React.FC<NpcModalProps> = ({
                 }`}
               >
                 {!needsHeal
-                  ? 'Здоров'
+                  ? t.npcHealed
                   : npc.healCost === 0
-                    ? 'Вылечить бесплатно'
-                    : `Вылечить (${npc.healCost} монет)`}
+                    ? t.npcHealFree
+                    : `${t.npcHealCost} (${npc.healCost})`}
               </button>
             </div>
           )}
@@ -214,13 +233,15 @@ export const NpcModal: React.FC<NpcModalProps> = ({
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
               <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
-              <span>Лавка жителя</span>
+              <span>{t.npcShopTitle}</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="npc-shop-list">
               {npc.shopItems.map(({ itemId, price }) => {
                 const def = ITEMS[itemId];
                 if (!def) return null;
+                const name = getItemName(def, language);
+                const desc = getItemDescription(def, language);
                 const canAfford = coins >= price;
                 return (
                   <div
@@ -233,10 +254,10 @@ export const NpcModal: React.FC<NpcModalProps> = ({
                       </div>
                       <div className="min-w-0">
                         <div className="text-xs font-semibold text-slate-100 truncate">
-                          {def.name}
+                          {name}
                         </div>
-                        <div className="text-[11px] text-slate-400 truncate" title={def.description}>
-                          {def.description}
+                        <div className="text-[11px] text-slate-400 leading-snug" title={desc}>
+                          {desc}
                         </div>
                       </div>
                     </div>
@@ -245,7 +266,7 @@ export const NpcModal: React.FC<NpcModalProps> = ({
                       type="button"
                       disabled={!canAfford}
                       onClick={() => onBuyItem(itemId)}
-                      aria-label={`Купить ${def.name} за ${price} монет`}
+                      aria-label={`${name} (${price})`}
                       className={`px-2.5 py-1.5 rounded-lg text-xs font-bold shrink-0 flex items-center gap-1 transition-colors ${
                         canAfford
                           ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer'

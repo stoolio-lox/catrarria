@@ -1,6 +1,6 @@
 {
-  "name": "Котаррия",
-  "description": "2D-песочница в духе Terraria про кота: копай, строй уютный дом, крафти арсенал оружия и сражайся с монстрами.",
+  "name": "Kotarria",
+  "description": "Terraria-inspired 2D cat sandbox: explore 6 biomes, raid the desert pyramid, build houses, craft gear, fight bosses, celestial pillars, and alien invasions.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

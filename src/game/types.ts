@@ -1,10 +1,11 @@
 export type GamePhase = 'title' | 'playing' | 'paused' | 'gameover';
+export type Language = 'en' | 'ru';
 
 export const TILE_SIZE = 32;
-export const WORLD_WIDTH = 1000;
-export const WORLD_HEIGHT = 220;
+export const WORLD_WIDTH = 2400;
+export const WORLD_HEIGHT = 380;
 
-export type BiomeType = 'forest' | 'snow' | 'crimson';
+export type BiomeType = 'forest' | 'snow' | 'desert' | 'crimson' | 'crystal' | 'ocean';
 export type WorldVariant = 'crimson_classic' | 'crystal_highlands';
 
 export enum TileType {
@@ -56,6 +57,13 @@ export enum TileType {
   Rope = 45,
   LifeCrystal = 46,
   PiggyBank = 47,
+  Cactus = 48,
+  Campfire = 49,
+  HeartLantern = 50,
+  HellstoneOre = 51,
+  CrimsonAltar = 52,
+  CrimsonTooth = 53,
+  Sunflower = 54,
 }
 
 export enum WallType {
@@ -67,6 +75,7 @@ export enum WallType {
   SnowWall = 5,
   CrimsonWall = 6,
   MarbleWall = 7,
+  SandstoneWall = 8,
 }
 
 export type ItemCategory =
@@ -81,7 +90,16 @@ export type ItemCategory =
   | 'accessory'
   | 'armor';
 export type ArmorSlotKind = 'helmet' | 'chestplate' | 'greaves';
-export type ArmorSetId = 'wood' | 'copper' | 'iron' | 'gold' | 'crimson' | 'obsidian' | 'crystal';
+export type ArmorSetId =
+  | 'wood'
+  | 'copper'
+  | 'iron'
+  | 'gold'
+  | 'crimson'
+  | 'obsidian'
+  | 'crystal'
+  | 'molten'
+  | 'hallowed';
 export type EquipSlotKey =
   | 'helmet'
   | 'chestplate'
@@ -94,6 +112,7 @@ export type EquipSlotKey =
 
 export type WeaponKind = 'melee' | 'spear' | 'bow' | 'magic' | 'boomerang' | 'laser' | 'bomb' | 'gun' | 'hook';
 export type CraftingStation = 'hand' | 'workbench' | 'furnace' | 'anvil';
+export type StationId = CraftingStation;
 export type AccessoryKind =
   | 'cloud_bottle'
   | 'hermes_boots'
@@ -104,15 +123,55 @@ export type AccessoryKind =
   | 'mana_flower'
   | 'horseshoe'
   | 'angel_wings'
-  | 'celestial_emblem';
-export type ConsumableSpecialKind = 'life_crystal' | 'mana_crystal' | 'magic_mirror' | 'house_blueprint';
+  | 'celestial_emblem'
+  | 'bounty_badge'
+  | 'terraspark_boots'
+  | 'ankh_shield';
+export type ConsumableSpecialKind =
+  | 'life_crystal'
+  | 'mana_crystal'
+  | 'magic_mirror'
+  | 'recall_potion'
+  | 'house_blueprint'
+  | 'alien_probe'
+  | 'lunar_sigil'
+  | 'buff_potion'
+  | 'red_potion'
+  | 'milk_potion';
+
+export type StatusEffectId =
+  | 'regeneration'
+  | 'ironskin'
+  | 'swiftness'
+  | 'mana_power'
+  | 'featherfall'
+  | 'wrath'
+  | 'obsidian_skin'
+  | 'shine'
+  | 'heartreach'
+  | 'poisoned'
+  | 'on_fire'
+  | 'slow'
+  | 'weak'
+  | 'broken_armor'
+  | 'confusion'
+  | 'darkness';
+
+export interface ActiveStatusEffect {
+  id: StatusEffectId;
+  duration: number;
+  maxDuration: number;
+  isDebuff: boolean;
+}
 
 export interface ItemDef {
   id: string;
   name: string;
+  nameRu?: string;
   category: ItemCategory;
   maxStack: number;
   description: string;
+  descriptionRu?: string;
   // Tool properties
   pickPower?: number;
   axePower?: number;
@@ -142,6 +201,7 @@ export interface ItemDef {
   summonsBoss?: EnemyKind;
   accessoryKind?: AccessoryKind;
   specialKind?: ConsumableSpecialKind;
+  grantsEffects?: { id: StatusEffectId; duration: number }[];
   shopPrice?: number;
 }
 
@@ -172,6 +232,8 @@ export interface EquipmentBonuses {
   hasWings: boolean;
   hasNoFallDamage: boolean;
   hasKnockbackImmune: boolean;
+  hasDebuffImmune?: boolean;
+  hasFireImmune?: boolean;
 }
 
 export interface CraftingRecipe {
@@ -224,22 +286,24 @@ export interface PlayerState {
   spawnY: number;
   houseValid: boolean;
   grapple: GrappleHookState;
+  effects: ActiveStatusEffect[];
 }
 
-export type NpcKind = 'guide' | 'merchant' | 'nurse' | 'demolitionist' | 'dryad';
+export type NpcKind = 'guide' | 'merchant' | 'nurse' | 'demolitionist' | 'dryad' | 'director';
 
 export interface NpcAppearance {
   skin: string;
   skinShade: string;
   hair: string;
   hairStyle: 'short' | 'parted' | 'bun' | 'beard' | 'crown';
-  hat: 'none' | 'tophat' | 'nurse' | 'helmet' | 'leaves';
+  hat: 'none' | 'tophat' | 'nurse' | 'helmet' | 'leaves' | 'suit';
   shirt: string;
   apron?: string;
   pants: string;
   eyeColor: string;
   blush: string;
   glasses?: boolean;
+  textureSrc?: string;
 }
 
 export interface NpcEntity {
@@ -288,6 +352,31 @@ export type EnemyKind =
   | 'bat'
   | 'goblin'
   | 'skeleton'
+  | 'ice_slime'
+  | 'ice_bat'
+  | 'frost_viking'
+  | 'antlion'
+  | 'sand_slime'
+  | 'mummy'
+  | 'crimera'
+  | 'face_monster'
+  | 'blood_crawler'
+  | 'pixie'
+  | 'sand_shark'
+  | 'hellbat'
+  | 'fire_imp'
+  | 'fire_demon'
+  | 'solar_corite'
+  | 'vortex_alien'
+  | 'nebula_floater'
+  | 'stardust_cell'
+  | 'alien_cat'
+  | 'alien_drone'
+  | 'martian_saucer'
+  | 'solar_pillar'
+  | 'vortex_pillar'
+  | 'nebula_pillar'
+  | 'stardust_pillar'
   | 'king_slime'
   | 'kotulhu'
   | 'cat_worm'
@@ -306,12 +395,19 @@ export type EnemyKind =
   | 'duke_fishron'
   | 'empress_light'
   | 'lunatic_cultist'
-  | 'moon_lord';
+  | 'moon_lord'
+  | 'pharaoh_cat'
+  | 'jester_cat'
+  | 'sun_cat'
+  | 'atomic_cat'
+  | 'party_cat'
+  | 'melon_bandit';
 
 export interface EnemyEntity {
   id: number;
   kind: EnemyKind;
   name: string;
+  nameRu?: string;
   x: number;
   y: number;
   vx: number;
@@ -320,6 +416,9 @@ export interface EnemyEntity {
   height: number;
   hp: number;
   maxHp: number;
+  shield?: number;
+  maxShield?: number;
+  pillarKind?: 'solar' | 'vortex' | 'nebula' | 'stardust';
   damage: number;
   defense: number;
   facing: 1 | -1;
@@ -352,7 +451,12 @@ export interface ProjectileEntity {
     | 'dynamite'
     | 'cursed_orb'
     | 'stinger'
-    | 'phantasmal_bolt';
+    | 'phantasmal_bolt'
+    | 'zenith_blade'
+    | 'demon_scythe'
+    | 'vampire_knife'
+    | 'rainbow_cat'
+    | 'star_wrath';
   x: number;
   y: number;
   vx: number;
@@ -367,7 +471,10 @@ export interface ProjectileEntity {
   aoeRadius: number;
   blastTiles?: number;
   color: string;
+  accentColor?: string;
+  curveDir?: number;
   returning?: boolean;
+  lifesteal?: number;
   hitIds: number[];
 }
 
@@ -431,6 +538,7 @@ export interface RunStats {
 }
 
 export interface GameSettings {
+  language: Language;
   musicEnabled: boolean;
   musicVolume: number; // 0..1
   sfxEnabled: boolean;
@@ -440,10 +548,21 @@ export interface GameSettings {
   autopauseInMenus: boolean;
 }
 
-export type DebugChestPreset = 'empty' | 'summons' | 'terraria' | 'builder' | 'armor' | 'bosses';
+export type DebugChestPreset = 'empty' | 'summons' | 'terraria' | 'builder' | 'armor' | 'bosses' | 'cats' | 'potions';
+
+export interface HudBossBar {
+  id: number;
+  kind: EnemyKind;
+  name: string;
+  hp: number;
+  maxHp: number;
+  shield?: number;
+  maxShield?: number;
+}
 
 export interface HudSnapshot {
   phase: GamePhase;
+  language: Language;
   hp: number;
   maxHp: number;
   mana: number;
@@ -475,6 +594,26 @@ export interface HudSnapshot {
   stats: RunStats;
   enemyCount: number;
   bossInfo: { name: string; hp: number; maxHp: number } | null;
+  activeBosses: HudBossBar[];
+  lunarEvent: {
+    active: boolean;
+    pillarsAlive: {
+      kind: EnemyKind;
+      name: string;
+      tx: number;
+      shield: number;
+      maxShield: number;
+      hp: number;
+      maxHp: number;
+    }[];
+    moonLordSpawned: boolean;
+  };
+  alienInvasion: {
+    active: boolean;
+    defeated: number;
+    target: number;
+    saucerAlive: boolean;
+  };
   toastMessage: string | null;
   godMode: boolean;
   nearbyStool: boolean;
@@ -513,5 +652,28 @@ export interface HudSnapshot {
     hint?: string;
     copiedUrl?: string;
   } | null;
+  activeEffects: {
+    id: StatusEffectId;
+    name: string;
+    description: string;
+    remaining: number;
+    maxDuration: number;
+    isDebuff: boolean;
+    color: string;
+  }[];
+  activeSaveId: string | null;
 }
 
+export interface SaveSlotMeta {
+  id: string;
+  name: string;
+  variant: WorldVariant;
+  dayCount: number;
+  hp: number;
+  maxHp: number;
+  coins: number;
+  biome: BiomeType;
+  playerTileX: number;
+  playerTileY: number;
+  savedAt: number;
+}

@@ -3,6 +3,7 @@ import {
   Compass,
   Feather,
   Hammer,
+  Info,
   PackageMinus,
   Shield,
   Sparkles,
@@ -10,21 +11,25 @@ import {
   X,
 } from 'lucide-react';
 import {
-  ARMOR_SET_META,
   ITEMS,
   RECIPES,
-  STATION_NAMES,
   canCraftRecipe,
   countItemInInventory,
   countUsedSlots,
+  getArmorSetMeta,
+  getItemDescription,
+  getItemName,
+  getStationName,
 } from '../game/catalog';
+import { UI_TEXT, tr } from '../game/i18n';
 import {
   CraftingRecipe,
   EquipSlotKey,
   HudSnapshot,
   ItemDef,
+  Language,
 } from '../game/types';
-import { BIOME_NAMES, WORLD_VARIANTS } from '../game/worldGen';
+import { getBiomeName, getWorldVariantInfo } from '../game/worldGen';
 import { ItemIcon } from './ItemIcon';
 
 interface InventoryModalProps {
@@ -61,41 +66,32 @@ type CraftFilter =
   | 'potions'
   | 'summons';
 
-const CATEGORY_TABS: { id: CraftFilter; label: string }[] = [
-  { id: 'all', label: 'Все' },
-  { id: 'armor', label: 'Броня' },
-  { id: 'weapons', label: 'Оружие' },
-  { id: 'tools', label: 'Кирки' },
-  { id: 'building', label: 'Блоки' },
-  { id: 'stations', label: 'Станции' },
-  { id: 'potions', label: 'Зелья' },
-  { id: 'summons', label: 'Боссы' },
-];
-
-function getCompactItemStat(item: ItemDef): string | null {
+function getCompactItemStat(item: ItemDef, lang: Language): string | null {
   if (item.category === 'armor' && item.defenseBonus) {
-    return `+${item.defenseBonus} Защ.`;
+    return `+${item.defenseBonus} ${tr(lang, 'Def', 'Защ.')}`;
   }
   if (item.category === 'tool' && item.pickPower) {
-    return `Кирка ${item.pickPower}`;
+    return `${tr(lang, 'Pick', 'Кирка')} ${item.pickPower}`;
   }
   if (item.weaponKind === 'hook') {
-    return 'Крюк';
+    return tr(lang, 'Hook', 'Крюк');
   }
   if (item.category === 'weapon' && item.damage) {
-    return `Урон ${item.damage}`;
+    return `${tr(lang, 'Dmg', 'Урон')} ${item.damage}`;
   }
   if (item.category === 'accessory') {
-    return item.defenseBonus ? `Аксесс. +${item.defenseBonus}` : 'Аксессуар';
+    return item.defenseBonus
+      ? `${tr(lang, 'Acc', 'Аксесс.')} +${item.defenseBonus}`
+      : tr(lang, 'Accessory', 'Аксессуар');
   }
-  if (item.category === 'summon') return 'Призыв босса';
-  if (item.specialKind === 'life_crystal') return '+20 Макс HP';
-  if (item.specialKind === 'mana_crystal') return '+20 Мана';
-  if (item.specialKind === 'house_blueprint') return 'Дом 9×6';
-  if (item.specialKind === 'magic_mirror') return 'Телепорт';
+  if (item.category === 'summon') return tr(lang, 'Summon', 'Призыв');
+  if (item.specialKind === 'life_crystal') return tr(lang, '+20 Max HP', '+20 Макс HP');
+  if (item.specialKind === 'mana_crystal') return tr(lang, '+20 Mana', '+20 Мана');
+  if (item.specialKind === 'house_blueprint') return tr(lang, 'House 9×6', 'Дом 9×6');
+  if (item.specialKind === 'magic_mirror') return tr(lang, 'Recall', 'Телепорт');
   if (item.healAmount) return `+${item.healAmount} HP`;
-  if (item.manaAmount) return `+${item.manaAmount} Маны`;
-  if (item.category === 'wall') return 'Фон';
+  if (item.manaAmount) return `+${item.manaAmount} ${tr(lang, 'Mana', 'Маны')}`;
+  if (item.category === 'wall') return tr(lang, 'Wall', 'Фон');
   return null;
 }
 
@@ -109,12 +105,27 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   onCraft,
   onSelectHotbar,
 }) => {
+  const lang = hud.language;
+  const t = UI_TEXT[lang];
+
   const [filter, setFilter] = useState<CraftFilter>('all');
   const [onlyCraftable, setOnlyCraftable] = useState(false);
+  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
   const [pickedSlot, setPickedSlot] = useState<{
     area: 'hotbar' | 'backpack';
     index: number;
   } | null>(null);
+
+  const categoryTabs: { id: CraftFilter; label: string }[] = [
+    { id: 'all', label: tr(lang, 'All', 'Все') },
+    { id: 'armor', label: tr(lang, 'Armor', 'Броня') },
+    { id: 'weapons', label: tr(lang, 'Weapons', 'Оружие') },
+    { id: 'tools', label: tr(lang, 'Pickaxes', 'Кирки') },
+    { id: 'building', label: tr(lang, 'Blocks', 'Блоки') },
+    { id: 'stations', label: tr(lang, 'Stations', 'Станции') },
+    { id: 'potions', label: tr(lang, 'Potions', 'Зелья') },
+    { id: 'summons', label: tr(lang, 'Bosses', 'Боссы') },
+  ];
 
   const slotUsage = useMemo(
     () => countUsedSlots(hud.hotbar, hud.backpack),
@@ -131,6 +142,14 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
     const item = ITEMS[slot.itemId];
     return item ? { ...pickedSlot, slot, item } : null;
   }, [pickedSlot, hud.hotbar, hud.backpack]);
+
+  const inspectedItem: ItemDef | null = useMemo(() => {
+    if (hoveredItemId && ITEMS[hoveredItemId]) return ITEMS[hoveredItemId];
+    if (pickedSlotData) return pickedSlotData.item;
+    const activeHotbar = hud.hotbar[hud.selectedSlot];
+    if (activeHotbar && ITEMS[activeHotbar.itemId]) return ITEMS[activeHotbar.itemId];
+    return null;
+  }, [hoveredItemId, pickedSlotData, hud.hotbar, hud.selectedSlot]);
 
   useEffect(() => {
     if (!pickedSlotData) return;
@@ -225,9 +244,9 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   };
 
   const armorSlots: { key: EquipSlotKey; label: string; slot: HudSnapshot['equipment']['helmet'] }[] = [
-    { key: 'helmet', label: 'Шлем', slot: hud.equipment.helmet },
-    { key: 'chestplate', label: 'Кираса', slot: hud.equipment.chestplate },
-    { key: 'greaves', label: 'Поножи', slot: hud.equipment.greaves },
+    { key: 'helmet', label: t.helmet, slot: hud.equipment.helmet },
+    { key: 'chestplate', label: t.chestplate, slot: hud.equipment.chestplate },
+    { key: 'greaves', label: t.greaves, slot: hud.equipment.greaves },
   ];
 
   const isPickedEquipable =
@@ -235,25 +254,27 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
     (pickedSlotData.item.category === 'armor' || pickedSlotData.item.category === 'accessory');
 
   const activeSetMeta = hud.equipmentBonuses.activeSet
-    ? ARMOR_SET_META[hud.equipmentBonuses.activeSet]
+    ? getArmorSetMeta(hud.equipmentBonuses.activeSet, lang)
     : null;
+
+  const variantInfo = getWorldVariantInfo(hud.worldVariant, lang);
 
   return (
     <div
       className="fixed inset-0 z-30 flex items-center justify-center p-2 sm:p-4 bg-slate-950/70"
       role="dialog"
       aria-modal="true"
-      aria-label="Инвентарь, снаряжение и крафт"
+      aria-label={t.inventoryTitle}
     >
       <div className="w-full max-w-6xl bg-[#10192b] border border-amber-400/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
         {/* Header with Coords, Variant & Biome */}
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-slate-700/80 bg-[#0b1322] shrink-0">
           <div>
             <h2 className="font-display font-bold text-lg text-amber-300">
-              Инвентарь, Снаряжение и Крафт
+              {t.inventoryTitle}
             </h2>
             <p className="text-xs text-slate-400">
-              Слоты: <span className="font-mono-num text-slate-200">{slotUsage.used}/{slotUsage.total}</span> · Мир: <span className="text-slate-200">{WORLD_VARIANTS[hud.worldVariant].title}</span> · Станции: {hud.nearbyStations.map((s) => STATION_NAMES[s]).join(' · ')}
+              {t.slots}: <span className="font-mono-num text-slate-200">{slotUsage.used}/{slotUsage.total}</span> · {t.world}: <span className="text-slate-200">{variantInfo.title}</span> · {t.stations}: {hud.nearbyStations.map((s) => getStationName(s, lang)).join(' · ')}
             </p>
           </div>
 
@@ -267,13 +288,13 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                 X: {hud.playerTileX}, Y: {hud.playerTileY}
               </span>
               <span className="text-slate-500">·</span>
-              <span className="font-semibold text-amber-200">{BIOME_NAMES[hud.biome]}</span>
+              <span className="font-semibold text-amber-200">{getBiomeName(hud.biome, lang)}</span>
             </div>
 
             <button
               type="button"
               onClick={onClose}
-              aria-label="Закрыть инвентарь"
+              aria-label={t.closeBtn}
               className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -288,15 +309,15 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
             data-testid="inventory-equipment-top"
             className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start"
           >
-            {/* Left: Backpack (54) + Selected Action Bar + Hotbar (9) */}
+            {/* Left: Backpack (54) + Selected Action Bar + Hotbar (9) + Item Description Inspector */}
             <div className="lg:col-span-7 space-y-3 bg-[#0b1322]/75 border border-slate-800 rounded-xl p-3.5">
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <h3 className="text-sm font-semibold text-slate-200">
-                    Рюкзак ({hud.backpack.length} слотов)
+                    {t.backpack} ({hud.backpack.length})
                   </h3>
                   <span className="text-[11px] text-slate-400">
-                    ЛКМ — выбрать · 2×ЛКМ — надеть броню/аксессуар · ПКМ — выбросить 1
+                    {t.backpackHint}
                   </span>
                 </div>
                 <div className="grid grid-cols-9 gap-1.5" data-testid="backpack-grid">
@@ -304,6 +325,8 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                     const isPicked =
                       pickedSlotData?.area === 'backpack' && pickedSlotData.index === idx;
                     const item = slot ? ITEMS[slot.itemId] : null;
+                    const itemName = item ? getItemName(item, lang) : '';
+                    const itemDesc = item ? getItemDescription(item, lang) : '';
                     return (
                       <button
                         key={idx}
@@ -311,12 +334,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         onClick={() => handleSlotClick('backpack', idx)}
                         onDoubleClick={() => handleSlotDoubleClick('backpack', idx)}
                         onContextMenu={(e) => handleSlotRightClick(e, 'backpack', idx)}
-                        title={
-                          item
-                            ? `${item.name} — ${item.description}`
-                            : 'Пустой слот'
-                        }
-                        aria-label={item ? `${item.name}, ${slot?.count}` : `Слот рюкзака ${idx + 1}`}
+                        onMouseEnter={() => setHoveredItemId(slot?.itemId ?? null)}
+                        onMouseLeave={() => setHoveredItemId(null)}
+                        title={item ? `${itemName} — ${itemDesc}` : t.empty}
+                        aria-label={item ? `${itemName}, ${slot?.count}` : `${t.backpack} ${idx + 1}`}
                         className={`relative aspect-square rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
                           isPicked
                             ? 'bg-amber-500/30 border-amber-400'
@@ -339,15 +360,15 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               {pickedSlotData && (
                 <div
                   className="bg-slate-950/90 border border-amber-400/50 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2"
-                  aria-label="Действия с выбранным предметом"
+                  aria-label="Selected item actions"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
                     <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center shrink-0">
                       <ItemIcon itemId={pickedSlotData.slot.itemId} size={20} />
                     </div>
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-amber-200 truncate">
-                        {pickedSlotData.item.name}
+                        {getItemName(pickedSlotData.item, lang)}
                         {pickedSlotData.slot.count > 1 && (
                           <span className="font-mono-num text-white ml-1">
                             ×{pickedSlotData.slot.count}
@@ -355,9 +376,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         )}
                       </div>
                       <div className="text-[11px] text-slate-400 truncate">
-                        {isPickedEquipable
-                          ? 'Нажми «Надеть» или кликни по слоту снаряжения справа'
-                          : 'Кликни по другому слоту, чтобы переложить, или выбрось'}
+                        {isPickedEquipable ? t.selectPromptEquip : t.selectPromptMove}
                       </div>
                     </div>
                   </div>
@@ -372,7 +391,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold cursor-pointer"
                       >
-                        Надеть
+                        {t.equipBtn}
                       </button>
                     )}
 
@@ -383,11 +402,11 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         onDropSlot(pickedSlotData.area, pickedSlotData.index, 1);
                         if (willEmpty) setPickedSlot(null);
                       }}
-                      aria-label={`Выбросить 1: ${pickedSlotData.item.name}`}
+                      aria-label={`${t.dropOne}: ${getItemName(pickedSlotData.item, lang)}`}
                       className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 border border-rose-400/50 text-rose-200 text-xs font-semibold flex items-center gap-1 cursor-pointer"
                     >
                       <PackageMinus className="w-3.5 h-3.5" />
-                      <span>Выбросить 1 [Q]</span>
+                      <span>{t.dropOne}</span>
                     </button>
 
                     {pickedSlotData.slot.count > 1 && (
@@ -397,11 +416,13 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                           onDropSlot(pickedSlotData.area, pickedSlotData.index, 'all');
                           setPickedSlot(null);
                         }}
-                        aria-label={`Выбросить всё: ${pickedSlotData.item.name}`}
+                        aria-label={`${t.dropAll}: ${getItemName(pickedSlotData.item, lang)}`}
                         className="px-2.5 py-1.5 rounded-lg bg-rose-600/30 hover:bg-rose-600/50 border border-rose-400/60 text-rose-100 text-xs font-semibold flex items-center gap-1 cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Всё (×{pickedSlotData.slot.count})</span>
+                        <span>
+                          {t.dropAll} (×{pickedSlotData.slot.count})
+                        </span>
                       </button>
                     )}
 
@@ -410,7 +431,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                       onClick={() => setPickedSlot(null)}
                       className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs cursor-pointer"
                     >
-                      Отмена
+                      {t.cancelBtn}
                     </button>
                   </div>
                 </div>
@@ -418,13 +439,15 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
 
               <div>
                 <h3 className="text-sm font-semibold text-slate-200 mb-2">
-                  Панель быстрого доступа (1–9)
+                  {t.hotbar}
                 </h3>
                 <div className="grid grid-cols-9 gap-1.5" data-testid="hotbar-modal-grid">
                   {hud.hotbar.map((slot, idx) => {
                     const isPicked =
                       pickedSlotData?.area === 'hotbar' && pickedSlotData.index === idx;
                     const item = slot ? ITEMS[slot.itemId] : null;
+                    const itemName = item ? getItemName(item, lang) : '';
+                    const itemDesc = item ? getItemDescription(item, lang) : '';
                     return (
                       <button
                         key={idx}
@@ -432,12 +455,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         onClick={() => handleSlotClick('hotbar', idx)}
                         onDoubleClick={() => handleSlotDoubleClick('hotbar', idx)}
                         onContextMenu={(e) => handleSlotRightClick(e, 'hotbar', idx)}
-                        title={
-                          item
-                            ? `${item.name} — ${item.description}`
-                            : 'Пустой слот'
-                        }
-                        aria-label={item ? `Хотбар ${idx + 1}: ${item.name}` : `Хотбар ${idx + 1} пуст`}
+                        onMouseEnter={() => setHoveredItemId(slot?.itemId ?? null)}
+                        onMouseLeave={() => setHoveredItemId(null)}
+                        title={item ? `${itemName} — ${itemDesc}` : t.empty}
+                        aria-label={item ? `${idx + 1}: ${itemName}` : `${idx + 1}: ${t.empty}`}
                         className={`relative aspect-square rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
                           isPicked
                             ? 'bg-amber-500/30 border-amber-400'
@@ -460,6 +481,40 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                   })}
                 </div>
               </div>
+
+              {/* Dedicated Item Description Inspector */}
+              <div
+                data-testid="inventory-item-inspector"
+                className="rounded-xl bg-slate-950/90 border border-slate-800 px-3 py-2.5 flex items-center gap-3 min-h-[56px]"
+              >
+                {inspectedItem ? (
+                  <>
+                    <div className="w-9 h-9 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center shrink-0">
+                      <ItemIcon itemId={inspectedItem.id} size={24} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-bold text-amber-200">
+                          {getItemName(inspectedItem, lang)}
+                        </span>
+                        {getCompactItemStat(inspectedItem, lang) && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-mono-num text-sky-300">
+                            {getCompactItemStat(inspectedItem, lang)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-300 leading-snug mt-0.5">
+                        {getItemDescription(inspectedItem, lang)}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <Info className="w-4 h-4 text-slate-500 shrink-0" />
+                    <span>{t.itemInspectEmpty}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Right: Equipment Panel (3 Armor + 5 Accessories + Set Bonus + Stats & Housing) */}
@@ -470,10 +525,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-amber-300 flex items-center gap-1.5">
                   <Shield className="w-4 h-4 text-sky-400" />
-                  <span>Снаряжение (Броня и Аксессуары)</span>
+                  <span>{t.equipment}</span>
                 </h3>
                 <span className="text-xs font-mono-num font-bold text-sky-300">
-                  Броня: {hud.defense}
+                  {t.armorLabel}: {hud.defense}
                 </span>
               </div>
 
@@ -481,6 +536,8 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               <div className="grid grid-cols-3 gap-2">
                 {armorSlots.map(({ key, label, slot }) => {
                   const item = slot ? ITEMS[slot.itemId] : null;
+                  const itemName = item ? getItemName(item, lang) : '';
+                  const itemDesc = item ? getItemDescription(item, lang) : '';
                   const canReceive =
                     pickedSlotData?.item.category === 'armor' &&
                     pickedSlotData.item.armorSlot === key;
@@ -494,12 +551,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         e.preventDefault();
                         onUnequipSlot(key);
                       }}
-                      title={
-                        item
-                          ? `${item.name} — ${item.description} (клик: снять)`
-                          : `Слот брони: ${label}`
-                      }
-                      aria-label={item ? `${label}: ${item.name}` : `${label}: пусто`}
+                      onMouseEnter={() => setHoveredItemId(slot?.itemId ?? null)}
+                      onMouseLeave={() => setHoveredItemId(null)}
+                      title={item ? `${itemName} — ${itemDesc}` : label}
+                      aria-label={item ? `${label}: ${itemName}` : `${label}: ${t.empty}`}
                       className={`p-2 rounded-xl border flex items-center gap-2 transition-colors cursor-pointer text-left ${
                         canReceive
                           ? 'bg-emerald-950/60 border-emerald-400'
@@ -520,7 +575,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                           {label}
                         </div>
                         <div className="text-[11px] font-semibold text-slate-100 truncate">
-                          {item ? item.name : 'Пусто'}
+                          {item ? itemName : t.empty}
                         </div>
                       </div>
                     </button>
@@ -533,14 +588,16 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                 <div className="text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    Аксессуары (5 слотов)
+                    {t.accessoriesTitle}
                   </span>
-                  <span className="text-[10px] text-slate-400">Клик по слоту — снять</span>
+                  <span className="text-[10px] text-slate-400">{t.clickToUnequip}</span>
                 </div>
                 <div className="grid grid-cols-5 gap-1.5">
                   {hud.equipment.accessories.map((slot, idx) => {
                     const key = `acc${idx}` as EquipSlotKey;
                     const item = slot ? ITEMS[slot.itemId] : null;
+                    const itemName = item ? getItemName(item, lang) : '';
+                    const itemDesc = item ? getItemDescription(item, lang) : '';
                     const canReceive = pickedSlotData?.item.category === 'accessory';
                     return (
                       <button
@@ -552,12 +609,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                           e.preventDefault();
                           onUnequipSlot(key);
                         }}
-                        title={
-                          item
-                            ? `${item.name} — ${item.description} (клик: снять)`
-                            : `Слот аксессуара ${idx + 1}`
-                        }
-                        aria-label={item ? `Аксессуар ${idx + 1}: ${item.name}` : `Слот аксессуара ${idx + 1} пуст`}
+                        onMouseEnter={() => setHoveredItemId(slot?.itemId ?? null)}
+                        onMouseLeave={() => setHoveredItemId(null)}
+                        title={item ? `${itemName} — ${itemDesc}` : `${t.accessoriesTitle} ${idx + 1}`}
+                        aria-label={item ? `${itemName}` : `${t.empty} ${idx + 1}`}
                         className={`relative aspect-square rounded-xl border flex flex-col items-center justify-center p-1 transition-colors cursor-pointer ${
                           canReceive
                             ? 'bg-emerald-950/60 border-emerald-400'
@@ -581,42 +636,42 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               <div className="rounded-lg bg-slate-950/80 border border-slate-800 p-2.5 text-xs space-y-1.5">
                 {activeSetMeta ? (
                   <div className="text-emerald-300 font-semibold">
-                    Бонус сета ({activeSetMeta.label}): {activeSetMeta.bonusText}
+                    {t.setBonusLabel} ({activeSetMeta.label}): {activeSetMeta.bonusText}
                   </div>
                 ) : (
                   <div className="text-slate-400 text-[11px]">
-                    Собери шлем + кирасу + поножи одного материала для бонуса комплекта!
+                    {t.setBonusPrompt}
                   </div>
                 )}
 
                 <div className="flex flex-wrap gap-1.5 text-[11px] font-mono-num">
                   <span className="px-1.5 py-0.5 rounded bg-slate-900 text-sky-200 border border-slate-700">
-                    Защита: {hud.defense}
+                    {t.defense}: {hud.defense}
                   </span>
                   <span className="px-1.5 py-0.5 rounded bg-slate-900 text-rose-200 border border-slate-700">
-                    Урон: {Math.round(hud.equipmentBonuses.damageMult * 100)}%
+                    {t.damageStat}: {Math.round(hud.equipmentBonuses.damageMult * 100)}%
                   </span>
                   <span className="px-1.5 py-0.5 rounded bg-slate-900 text-emerald-200 border border-slate-700">
-                    Скорость: {Math.round(hud.equipmentBonuses.speedMult * 100)}%
+                    {t.speedStat}: {Math.round(hud.equipmentBonuses.speedMult * 100)}%
                   </span>
                   {hud.equipmentBonuses.hasWings && (
                     <span className="px-1.5 py-0.5 rounded bg-sky-950 text-sky-200 border border-sky-500/40">
-                      Крылья ВКЛ
+                      {t.wingsOn}
                     </span>
                   )}
                   {hud.equipmentBonuses.hasDoubleJump && (
                     <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white border border-slate-600">
-                      2× Прыжок
+                      {t.doubleJump}
                     </span>
                   )}
                   {hud.equipmentBonuses.hasKnockbackImmune && (
                     <span className="px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-200 border border-indigo-500/40">
-                      Анти-отброс
+                      {t.noKnockback}
                     </span>
                   )}
                   {hud.equipmentBonuses.hasNoFallDamage && (
                     <span className="px-1.5 py-0.5 rounded bg-amber-950 text-amber-200 border border-amber-500/40">
-                      Нет урона падения
+                      {t.noFall}
                     </span>
                   )}
                 </div>
@@ -625,10 +680,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               {/* Compact World & Villager Info */}
               <div className="rounded-lg bg-slate-950/60 border border-slate-800/80 px-2.5 py-2 text-[11px] text-slate-300 flex flex-wrap items-center justify-between gap-2">
                 <span>
-                  Дома: <strong className="text-white">{hud.validHouseCount}</strong> ({hud.houseValid ? 'Внутри +HP' : 'Снаружи'}) · Жители: <strong className="text-emerald-300">{hud.npcsSummary.length}/5</strong>
+                  {t.houses}: <strong className="text-white">{hud.validHouseCount}</strong> ({hud.houseValid ? t.indoors : tr(lang, 'Outdoors', 'Снаружи')}) · {t.villagers}: <strong className="text-emerald-300">{hud.npcsSummary.length}/6</strong>
                 </span>
                 <span className="font-mono-num text-amber-300">
-                  Монеты: {hud.coins} · {hud.depthMeters} м
+                  {t.coins}: {hud.coins} · {hud.depthMeters}{t.depth}
                 </span>
               </div>
             </div>
@@ -643,10 +698,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-display font-bold text-amber-300 flex items-center gap-1.5 mr-2">
                   <Hammer className="w-4 h-4" />
-                  <span>Крафты</span>
+                  <span>{t.craftingTitle}</span>
                 </h3>
                 <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-900 rounded-lg border border-slate-800">
-                  {CATEGORY_TABS.map((tab) => (
+                  {categoryTabs.map((tab) => (
                     <button
                       key={tab.id}
                       type="button"
@@ -670,7 +725,9 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                   onChange={(e) => setOnlyCraftable(e.target.checked)}
                   className="accent-amber-500"
                 />
-                <span>Только доступные ({visibleRecipes.length})</span>
+                <span>
+                  {t.onlyCraftable} ({visibleRecipes.length})
+                </span>
               </label>
             </div>
 
@@ -680,7 +737,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
             >
               {visibleRecipes.length === 0 ? (
                 <div className="md:col-span-2 text-center py-8 text-sm text-slate-400">
-                  Нет подходящих рецептов. Добудьте дерево, камень, кристалл или руду!
+                  {t.noRecipes}
                 </div>
               ) : (
                 visibleRecipes.map((recipe) => (
@@ -688,6 +745,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                     key={recipe.id}
                     recipe={recipe}
                     hud={hud}
+                    onHoverItem={setHoveredItemId}
                     onCraft={onCraft}
                   />
                 ))
@@ -703,17 +761,24 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
 const RecipeRow: React.FC<{
   recipe: CraftingRecipe;
   hud: HudSnapshot;
+  onHoverItem: (itemId: string | null) => void;
   onCraft: (id: string) => void;
-}> = ({ recipe, hud, onCraft }) => {
+}> = ({ recipe, hud, onHoverItem, onCraft }) => {
+  const lang = hud.language;
+  const t = UI_TEXT[lang];
   const result = ITEMS[recipe.resultId];
   if (!result) return null;
   const craftable = canCraftRecipe(recipe, hud.hotbar, hud.backpack, hud.nearbyStations);
   const stationOk =
     recipe.station === 'hand' || hud.nearbyStations.includes(recipe.station);
-  const statTag = getCompactItemStat(result);
+  const statTag = getCompactItemStat(result, lang);
+  const resultName = getItemName(result, lang);
+  const resultDesc = getItemDescription(result, lang);
 
   return (
     <div
+      onMouseEnter={() => onHoverItem(recipe.resultId)}
+      onMouseLeave={() => onHoverItem(null)}
       className={`flex items-center justify-between gap-2.5 px-2.5 py-2 rounded-xl border ${
         craftable
           ? 'bg-slate-900/95 border-amber-500/45'
@@ -723,7 +788,7 @@ const RecipeRow: React.FC<{
       <div className="flex items-center gap-2.5 min-w-0 flex-1">
         <div
           className="w-9 h-9 rounded-lg bg-slate-950 border border-slate-700 flex items-center justify-center shrink-0"
-          title={result.description}
+          title={resultDesc}
         >
           <ItemIcon itemId={recipe.resultId} size={22} />
         </div>
@@ -731,7 +796,7 @@ const RecipeRow: React.FC<{
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-xs sm:text-sm font-semibold text-slate-100 truncate">
-              {result.name}
+              {resultName}
             </span>
             {recipe.resultCount > 1 && (
               <span className="text-xs font-mono-num font-bold text-amber-300 shrink-0">
@@ -745,15 +810,20 @@ const RecipeRow: React.FC<{
             )}
           </div>
 
+          <p className="text-[11px] text-slate-400 truncate" title={resultDesc}>
+            {resultDesc}
+          </p>
+
           <div className="flex flex-wrap items-center gap-1.5 mt-1">
             {recipe.ingredients.map((ing) => {
               const ingDef = ITEMS[ing.itemId];
+              const ingName = ingDef ? getItemName(ingDef, lang) : ing.itemId;
               const have = countItemInInventory(hud.hotbar, hud.backpack, ing.itemId);
               const enough = have >= ing.count;
               return (
                 <span
                   key={ing.itemId}
-                  title={ingDef?.name ?? ing.itemId}
+                  title={ingName}
                   className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-mono-num ${
                     enough
                       ? 'bg-emerald-950/60 border-emerald-500/35 text-emerald-200'
@@ -761,7 +831,7 @@ const RecipeRow: React.FC<{
                   }`}
                 >
                   <ItemIcon itemId={ing.itemId} size={13} />
-                  <span className="truncate max-w-[92px] font-sans">{ingDef?.name ?? ing.itemId}</span>
+                  <span className="truncate max-w-[92px] font-sans">{ingName}</span>
                   <span className="font-bold">
                     {have}/{ing.count}
                   </span>
@@ -777,7 +847,7 @@ const RecipeRow: React.FC<{
                     : 'bg-amber-950/70 border border-amber-500/35 text-amber-300'
                 }`}
               >
-                {STATION_NAMES[recipe.station]}
+                {getStationName(recipe.station, lang)}
               </span>
             )}
           </div>
@@ -788,14 +858,14 @@ const RecipeRow: React.FC<{
         type="button"
         disabled={!craftable}
         onClick={() => onCraft(recipe.id)}
-        aria-label={`Создать ${result.name}`}
+        aria-label={`${t.craftBtn} ${resultName}`}
         className={`px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
           craftable
             ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer'
             : 'bg-slate-800 text-slate-500 cursor-not-allowed'
         }`}
       >
-        Создать
+        {t.craftBtn}
       </button>
     </div>
   );

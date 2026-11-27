@@ -1,7 +1,9 @@
 import { ITEMS } from './catalog';
 import { moveEntityWithTiles } from './physics';
 import {
+  BiomeType,
   EnemyEntity,
+  Language,
   NpcAppearance,
   NpcEntity,
   NpcKind,
@@ -16,6 +18,8 @@ export interface NpcTemplate {
   kind: NpcKind;
   name: string;
   title: string;
+  nameRu: string;
+  titleRu: string;
   appearance: NpcAppearance;
   shopItemIds: string[];
 }
@@ -23,8 +27,10 @@ export interface NpcTemplate {
 export const NPC_TEMPLATES: Record<NpcKind, NpcTemplate> = {
   guide: {
     kind: 'guide',
-    name: 'Максим',
-    title: 'Гид',
+    name: 'Max',
+    title: 'Guide',
+    nameRu: 'Максим',
+    titleRu: 'Гид',
     appearance: {
       skin: '#f6c7a6',
       skinShade: '#df9e78',
@@ -40,8 +46,10 @@ export const NPC_TEMPLATES: Record<NpcKind, NpcTemplate> = {
   },
   merchant: {
     kind: 'merchant',
-    name: 'Борис',
-    title: 'Торговец',
+    name: 'Boris',
+    title: 'Merchant',
+    nameRu: 'Борис',
+    titleRu: 'Торговец',
     appearance: {
       skin: '#f1c29b',
       skinShade: '#d59c72',
@@ -58,8 +66,11 @@ export const NPC_TEMPLATES: Record<NpcKind, NpcTemplate> = {
     shopItemIds: [
       'torch_item',
       'rope_item',
+      'campfire_item',
+      'sunflower_item',
       'healing_potion',
       'mana_potion',
+      'recall_potion',
       'piggy_bank_item',
       'grappling_hook',
       'copper_pickaxe',
@@ -70,8 +81,10 @@ export const NPC_TEMPLATES: Record<NpcKind, NpcTemplate> = {
   },
   nurse: {
     kind: 'nurse',
-    name: 'Алина',
-    title: 'Медсестра',
+    name: 'Alina',
+    title: 'Nurse',
+    nameRu: 'Алина',
+    titleRu: 'Медсестра',
     appearance: {
       skin: '#ffe0c8',
       skinShade: '#e8b391',
@@ -84,12 +97,25 @@ export const NPC_TEMPLATES: Record<NpcKind, NpcTemplate> = {
       eyeColor: '#0284c7',
       blush: '#f472b6',
     },
-    shopItemIds: ['healing_potion', 'mana_potion', 'warm_milk', 'life_crystal'],
+    shopItemIds: [
+      'healing_potion',
+      'mana_potion',
+      'milk_potion',
+      'red_potion',
+      'regen_potion',
+      'ironskin_potion',
+      'swiftness_potion',
+      'heart_lantern_item',
+      'warm_milk',
+      'life_crystal',
+    ],
   },
   demolitionist: {
     kind: 'demolitionist',
-    name: 'Гриша',
-    title: 'Подрывник',
+    name: 'Grisha',
+    title: 'Demolitionist',
+    nameRu: 'Гриша',
+    titleRu: 'Подрывник',
     appearance: {
       skin: '#ebb893',
       skinShade: '#c68d65',
@@ -106,8 +132,10 @@ export const NPC_TEMPLATES: Record<NpcKind, NpcTemplate> = {
   },
   dryad: {
     kind: 'dryad',
-    name: 'Лиза',
-    title: 'Дриада',
+    name: 'Liza',
+    title: 'Dryad',
+    nameRu: 'Лиза',
+    titleRu: 'Дриада',
     appearance: {
       skin: '#f5cfb3',
       skinShade: '#d8a684',
@@ -120,16 +148,63 @@ export const NPC_TEMPLATES: Record<NpcKind, NpcTemplate> = {
       blush: '#fda4af',
     },
     shopItemIds: [
+      'sunflower_item',
       'cloud_in_bottle',
       'hermes_boots',
       'band_of_regen',
       'magic_mirror',
+      'featherfall_potion',
+      'shine_potion',
+      'heartreach_potion',
       'life_crystal',
       'mana_crystal',
       'crystal_block',
     ],
   },
+  director: {
+    kind: 'director',
+    name: 'Meow',
+    title: 'Director',
+    nameRu: 'Зазу',
+    titleRu: 'Директор',
+    appearance: {
+      skin: '#d6d3d1',
+      skinShade: '#a8a29e',
+      hair: '#475569',
+      hairStyle: 'short',
+      hat: 'suit',
+      shirt: '#1e293b',
+      apron: '#f8fafc',
+      pants: '#0f172a',
+      eyeColor: '#16a34a',
+      blush: '#fb7185',
+      textureSrc: '/assets/aistudio/dir_72c7e44f.jpg',
+    },
+    shopItemIds: [
+      'red_potion',
+      'milk_potion',
+      'wrath_potion',
+      'obsidian_skin_potion',
+      'summon_pharaoh_cat',
+      'summon_alien_invasion',
+      'summon_jester_cat',
+      'summon_pillars',
+      'angel_wings',
+      'terraspark_boots',
+      'ankh_shield',
+      'magic_mirror',
+      'dynamite',
+      'house_blueprint',
+    ],
+  },
 };
+
+export function getNpcDisplay(kind: NpcKind, lang: Language = 'en'): { name: string; title: string } {
+  const tpl = NPC_TEMPLATES[kind];
+  return lang === 'ru'
+    ? { name: tpl.nameRu, title: tpl.titleRu }
+    : { name: tpl.name, title: tpl.title };
+}
 
 export function createNpc(
   id: number,
@@ -138,13 +213,15 @@ export function createNpc(
   y: number,
   homeTileX: number | null = null,
   homeTileY: number | null = null,
+  lang: Language = 'en',
 ): NpcEntity {
   const tpl = NPC_TEMPLATES[kind];
+  const disp = getNpcDisplay(kind, lang);
   return {
     id,
     kind,
-    name: tpl.name,
-    title: tpl.title,
+    name: disp.name,
+    title: disp.title,
     x,
     y,
     vx: 0,
@@ -182,54 +259,124 @@ export function getNpcDialogue(
   npc: NpcEntity,
   opts: {
     isNight: boolean;
-    biome: 'forest' | 'snow' | 'crimson';
+    biome: BiomeType;
     validHouseCount: number;
     hasBoss: boolean;
     stoolPetted: boolean;
   },
+  lang: Language = 'en',
 ): string {
   if (opts.hasBoss) {
+    if (lang === 'ru') {
+      switch (npc.kind) {
+        case 'guide':
+          return 'Держись, котик! Прыгай по платформам и бей босса издалека луком или магией!';
+        case 'nurse':
+          return 'Осторожнее там! Если здоровье упадёт, забегай ко мне — я мигом подлечу!';
+        case 'demolitionist':
+          return 'Закидай этого босса динамитом! Ничто не устоит перед хорошим взрывом!';
+        case 'director':
+          return 'Коллега, бюджет на битву с боссом одобрен! Можешь призвать хоть пять сразу!';
+        default:
+          return 'Мы верим в тебя! Покажи этому чудищу силу кошачьих лап!';
+      }
+    }
     switch (npc.kind) {
       case 'guide':
-        return 'Держись, котик! Прыгай по платформам и бей босса издалека луком или магией!';
+        return 'Stay sharp, kitty! Hop across platforms and strike the boss from afar with bows or magic!';
       case 'nurse':
-        return 'Осторожнее там! Если здоровье упадёт, забегай ко мне — я мигом подлечу!';
+        return 'Be careful out there! If your HP drops low, swing by me for an instant heal!';
       case 'demolitionist':
-        return 'Закидай этого босса динамитом! Ничто не устоит перед хорошим взрывом!';
+        return 'Blast that boss with Dynamite! Nothing survives a proper mining explosion!';
+      case 'director':
+        return 'Overtime battle budget approved! Remember, you can summon multiple bosses at once if you dare!';
       default:
-        return 'Мы верим в тебя! Покажи этому чудищу силу кошачьих лап!';
+        return 'We believe in you! Show that monster the power of Zazu paws!';
+    }
+  }
+
+  if (lang === 'ru') {
+    switch (npc.kind) {
+      case 'guide':
+        if (opts.validHouseCount === 0) {
+          return 'Построй домик: стены, фон, дверь, свет (факел/люстра), стол и стул — и придут новые жители! Или используй «Чертёж уютного дома».';
+        }
+        if (opts.isNight) {
+          return 'Ночью выходят монстры, зато падают Упавшие звёзды! 3 звезды = Кристалл Маны.';
+        }
+        if (!opts.stoolPetted) {
+          return 'Кстати, рядом со спавном стоит особенная табуретка. Погладь её (ЛКМ), а потом нажми ПКМ!';
+        }
+        return `Отлично! У тебя уже ${opts.validHouseCount} жилых комнат. На западе Пустыня с Пирамидой и боссом Насерафалом II!`;
+
+      case 'merchant':
+        if (opts.biome === 'snow') {
+          return 'Брр, морозно! Запасайся факелами, верёвками и лечебными зельями!';
+        }
+        if (opts.biome === 'desert') {
+          return 'Жаркая Пустыня полна песка и древних сокровищ в Пирамиде!';
+        }
+        return 'Монетки звенят в кармане? Загляни в лавку — есть Крюк-кошка, Мини-акула и чертежи домов!';
+
+      case 'nurse':
+        return 'Милый котик, не забывай проверять царапины! Могу полностью восстановить здоровье за пару монет.';
+
+      case 'demolitionist':
+        return 'Кирка — это скучно! Возьми Терра-бомбу или Динамит — проломишь Пирамиду и пещеры за секунду!';
+
+      case 'dryad':
+        if (opts.biome === 'crimson') {
+          return 'Багряный биом полон тревожной энергии, будь начеку!';
+        }
+        if (opts.biome === 'crystal') {
+          return 'Кристальная долина сияет древней магией — идеальное место для крыльев и брони!';
+        }
+        return 'У меня есть волшебные аксессуары Террарии: Облако в бутылке для двойного прыжка и Ботинки Гермеса!';
+
+      case 'director':
+        return 'Добро пожаловать в офис Котаррии! Продаю призыв Насерафала II, Марсианский Кото-Зонд и Маяк 4 Небесных Башен.';
     }
   }
 
   switch (npc.kind) {
     case 'guide':
       if (opts.validHouseCount === 0) {
-        return 'Построй домик: стены, задний фон, дверь, свет (факел/люстра), стол и стул — и придут новые жители! Или используй «Чертёж уютного дома» из рюкзака.';
+        return 'Build a house with walls, background wall, door, light, table & chair to welcome new villagers! Or use a Cozy House Blueprint.';
       }
       if (opts.isNight) {
-        return 'Ночью выходят гоблины и скелеты, зато с неба падают Упавшие звёзды! Собери 3 штуки для Кристалла Маны.';
+        return 'Monsters prowl at night, but Fallen Stars drop from the sky! Craft 3 into a Mana Crystal.';
       }
       if (!opts.stoolPetted) {
-        return 'Кстати, рядом со спавном стоит особенная табуретка. Попробуй её погладить, а потом нажать ПКМ!';
+        return 'Psst! Check out the Starter Stool near spawn — pet it with LMB first, then right-click it!';
       }
-      return `Отлично! У тебя уже ${opts.validHouseCount} жилых комнат. Ищи под землёй Кристаллы Жизни, горшки с монетами и сундуки!`;
+      return `Awesome! You have ${opts.validHouseCount} valid houses. Head west to raid the Desert Pyramid and challenge Naserafal II!`;
 
     case 'merchant':
       if (opts.biome === 'snow') {
-        return 'Брр, прохладно! Запасайся факелами, верёвками и лечебными зельями!';
+        return 'Brrr, chilly Tundra! Stock up on torches, climbing ropes, and healing potions!';
       }
-      return 'Золотые монетки звенят в кармане? Загляни в лавку — есть Крюк-кошка, Мини-акула и чертежи домов!';
+      if (opts.biome === 'desert') {
+        return 'Hot sands ahead! Bring ropes for descending into the Desert Pyramid burial chamber.';
+      }
+      return 'Got shiny coins jingling? Check my shop for Grappling Hooks, the Minishark, and House Blueprints!';
 
     case 'nurse':
-      return 'Милый котик, не забывай проверять царапины! Могу полностью восстановить здоровье за пару монет.';
+      return 'Sweet kitty, keep those whiskers healthy! I can restore all your HP and Mana in a blink.';
 
     case 'demolitionist':
-      return 'Кирка — это скучно! Возьми Терра-бомбу или Динамит — проломишь любую пещеру за секунду!';
+      return 'Pickaxes are too slow! Grab a bundle of Dynamite and blast straight into the Underworld!';
 
     case 'dryad':
-      return opts.biome === 'crimson'
-        ? 'Красный биом полон тревожной энергии, будь начеку!'
-        : 'У меня есть волшебные аксессуары Террарии: Облако в бутылке для двойного прыжка и Ботинки Гермеса!';
+      if (opts.biome === 'crimson') {
+        return 'The Crimson radiates fierce bloodstone energy — stay alert!';
+      }
+      if (opts.biome === 'crystal') {
+        return 'Crystal Hollow shimmers with pure mana! Mine Crystal Shards for endgame wings & armor.';
+      }
+      return 'I carry classic Terraria accessories: Cloud in a Bottle for double jumps and Hermes Boots!';
+
+    case 'director':
+      return 'Cat HQ quarterly report: Pharaoh Naserafal II, Martian Cat Probe & Celestial Pillar Beacons are now in stock!';
   }
 }
 
@@ -240,16 +387,24 @@ export function syncVillageNpcs(
   player: PlayerState,
   bossDefeated: boolean,
   forceInviteAll = false,
+  lang: Language = 'en',
 ): { spawnedNames: string[]; validHouseCount: number } {
   const houses = findValidNpcHouses(world);
   const spawnedNames: string[] = [];
 
-  // Ensure Guide Максим always exists
+  for (const npc of npcs) {
+    const disp = getNpcDisplay(npc.kind, lang);
+    npc.name = disp.name;
+    npc.title = disp.title;
+  }
+
+  // Ensure Guide Max always exists
   if (!npcs.some((n) => n.kind === 'guide')) {
     const spawnX = Math.floor(world.width / 2) - 4;
     const spawnY = world.surfaceHeights[spawnX] - 2;
-    const guide = createNpc(nextIdFn(), 'guide', spawnX * TILE_SIZE, spawnY * TILE_SIZE);
-    guide.speechText = 'Привет, котик! Я гид Максим.';
+    const guide = createNpc(nextIdFn(), 'guide', spawnX * TILE_SIZE, spawnY * TILE_SIZE, null, null, lang);
+    guide.speechText =
+      lang === 'ru' ? 'Привет, котик! Я гид Максим.' : 'Hey kitty! I am Max the Guide.';
     guide.speechTimer = 5;
     npcs.push(guide);
   }
@@ -281,15 +436,15 @@ export function syncVillageNpcs(
     }
   };
 
-  // Let existing villagers (starting with Guide) settle into newly built houses first
   assignFreeHomes();
 
-  // Unlock sequence for Terraria-style villagers
+  // Unlock sequence for Terraria-style villagers + Director Meow
   const desiredKinds: NpcKind[] = ['guide'];
   if (forceInviteAll || houses.length >= 1 || player.coins >= 20) desiredKinds.push('merchant');
   if (forceInviteAll || houses.length >= 2 || player.maxHp > 100) desiredKinds.push('nurse');
   if (forceInviteAll || houses.length >= 3) desiredKinds.push('demolitionist');
   if (forceInviteAll || houses.length >= 4 || bossDefeated) desiredKinds.push('dryad');
+  if (forceInviteAll || houses.length >= 5 || bossDefeated) desiredKinds.push('director');
 
   for (const kind of desiredKinds) {
     if (!npcs.some((n) => n.kind === kind)) {
@@ -307,8 +462,12 @@ export function syncVillageNpcs(
         ty * TILE_SIZE,
         freeHouse ? freeHouse.centerTileX : null,
         freeHouse ? freeHouse.centerTileY : null,
+        lang,
       );
-      npc.speechText = `Всем привет! Я ${npc.title} ${npc.name}!`;
+      npc.speechText =
+        lang === 'ru'
+          ? `Всем привет! Я ${npc.title} ${npc.name}!`
+          : `Hello there! I am ${npc.title} ${npc.name}!`;
       npc.speechTimer = 4.5;
       npcs.push(npc);
       spawnedNames.push(`${npc.title} ${npc.name}`);
@@ -334,13 +493,11 @@ export function stepNpcAI(
     if (npc.speechTimer <= 0) npc.speechText = null;
   }
 
-  // Natural human blinking cycle
   npc.blinkTimer -= dt;
   if (npc.blinkTimer <= -0.14) {
     npc.blinkTimer = 2.1 + Math.random() * 2.8;
   }
 
-  // Check if an enemy is threatening nearby -> defend village!
   let nearestThreat: EnemyEntity | null = null;
   let nearestThreatDist = 230;
   const ncx = npc.x + npc.width / 2;
@@ -371,21 +528,21 @@ export function stepNpcAI(
               ? '#f97316'
               : npc.kind === 'nurse'
                 ? '#f472b6'
-                : '#fde047',
+                : npc.kind === 'director'
+                  ? '#38bdf8'
+                  : '#fde047',
       };
     }
   } else {
     npc.stateTimer -= dt;
     const distToPlayer = Math.hypot(player.x + player.width / 2 - ncx, player.y + player.height / 2 - ncy);
 
-    // At night, return toward home if assigned
     const homeWx = npc.homeTileX !== null ? (npc.homeTileX + 0.5) * TILE_SIZE : null;
     if (isNight && homeWx !== null && Math.abs(homeWx - ncx) > 36) {
       npc.actionState = 'walk';
       npc.facing = homeWx >= ncx ? 1 : -1;
       npc.stateTimer = 1.2;
     } else if (npc.stateTimer <= 0) {
-      // Choose a natural human behavior
       const ntx = Math.floor(ncx / TILE_SIZE);
       const nty = Math.floor((npc.y + npc.height - 8) / TILE_SIZE);
       const nearSeat =
@@ -402,7 +559,7 @@ export function stepNpcAI(
       } else if (nearSeat && roll < 0.6) {
         npc.actionState = 'sit';
         npc.stateTimer = 2.6 + Math.random() * 2.0;
-      } else if (roll < 0.25 && npc.kind === 'guide') {
+      } else if (roll < 0.25 && (npc.kind === 'guide' || npc.kind === 'director')) {
         npc.actionState = 'read';
         npc.stateTimer = 2.2 + Math.random() * 1.4;
       } else if (roll < 0.72) {
@@ -425,7 +582,6 @@ export function stepNpcAI(
     if (npc.actionState === 'walk') {
       const targetVx = npc.facing * 72;
       npc.vx += (targetVx - npc.vx) * Math.min(1, dt * 10);
-      // Human-like door handling: open closed door directly ahead
       const aheadTx = Math.floor((ncx + npc.facing * 18) / TILE_SIZE);
       const torsoTy = Math.floor((npc.y + npc.height * 0.65) / TILE_SIZE);
       if (getTile(world, aheadTx, torsoTy) === TileType.DoorClosed) {

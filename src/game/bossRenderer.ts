@@ -3,6 +3,13 @@ import { EnemyEntity, EnemyKind } from './types';
 export interface BossTextures {
   kotulhuImg: HTMLImageElement | null;
   catWormImg: HTMLImageElement | null;
+  pharaohImg: HTMLImageElement | null;
+  jesterImg: HTMLImageElement | null;
+  sunImg: HTMLImageElement | null;
+  atomicImg: HTMLImageElement | null;
+  partyImg: HTMLImageElement | null;
+  melonImg: HTMLImageElement | null;
+  alienImg: HTMLImageElement | null;
 }
 
 /**
@@ -759,6 +766,355 @@ export function drawBossEnemy(
       ctx.beginPath();
       ctx.arc(cx, cy + 16, 13, 0, Math.PI * 2);
       ctx.fill();
+      return true;
+    }
+
+    case 'solar_pillar':
+    case 'vortex_pillar':
+    case 'nebula_pillar':
+    case 'stardust_pillar': {
+      const palette =
+        enemy.kind === 'solar_pillar'
+          ? { core: '#f97316', rim: '#fde047', shield: 'rgba(251, 146, 60, 0.34)', border: '#fdba74' }
+          : enemy.kind === 'vortex_pillar'
+            ? { core: '#10b981', rim: '#5eead4', shield: 'rgba(45, 212, 191, 0.34)', border: '#99f6e4' }
+            : enemy.kind === 'nebula_pillar'
+              ? { core: '#d946ef', rim: '#f5d0fe', shield: 'rgba(232, 121, 249, 0.34)', border: '#f0abfc' }
+              : { core: '#0ea5e9', rim: '#bae6fd', shield: 'rgba(56, 189, 248, 0.34)', border: '#7dd3fc' };
+
+      const floatY = Math.sin(elapsed * 2.4 + enemy.animPhase) * 6;
+      const colCx = cx;
+      const colCy = cy + floatY;
+
+      // Energy tendrils below monolith
+      ctx.strokeStyle = palette.core;
+      ctx.lineWidth = 4;
+      for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(colCx + i * 9, colCy + enemy.height * 0.38);
+        ctx.lineTo(colCx + i * 12 + Math.sin(elapsed * 5 + i) * 6, colCy + enemy.height * 0.56);
+        ctx.stroke();
+      }
+
+      // Obelisk monolith body
+      ctx.fillStyle = isFlash ? '#ffffff' : '#0f172a';
+      ctx.strokeStyle = palette.rim;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(colCx, colCy - enemy.height * 0.48);
+      ctx.lineTo(colCx + enemy.width * 0.44, colCy - enemy.height * 0.14);
+      ctx.lineTo(colCx + enemy.width * 0.3, colCy + enemy.height * 0.44);
+      ctx.lineTo(colCx - enemy.width * 0.3, colCy + enemy.height * 0.44);
+      ctx.lineTo(colCx - enemy.width * 0.44, colCy - enemy.height * 0.14);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Inner glowing rune core
+      ctx.fillStyle = palette.core;
+      ctx.beginPath();
+      ctx.moveTo(colCx, colCy - enemy.height * 0.28);
+      ctx.lineTo(colCx + 15, colCy);
+      ctx.lineTo(colCx, colCy + enemy.height * 0.26);
+      ctx.lineTo(colCx - 15, colCy);
+      ctx.closePath();
+      ctx.fill();
+
+      // Orbiting celestial shards
+      for (let i = 0; i < 4; i++) {
+        const a = elapsed * 2.2 + (i * Math.PI) / 2;
+        const ox = colCx + Math.cos(a) * (enemy.width * 0.68);
+        const oy = colCy + Math.sin(a) * (enemy.height * 0.34);
+        ctx.fillStyle = palette.rim;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Translucent planetary shield dome while shield > 0
+      if ((enemy.shield ?? 0) > 0) {
+        const domeRad = Math.max(enemy.width, enemy.height) * 0.62;
+        ctx.fillStyle = palette.shield;
+        ctx.strokeStyle = palette.border;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(colCx, colCy, domeRad, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`SHIELD ${enemy.shield}`, colCx, colCy - domeRad - 6);
+      }
+      return true;
+    }
+
+    case 'martian_saucer': {
+      // Tractor beam glow underneath
+      const beamAlpha = 0.2 + Math.sin(elapsed * 8) * 0.08;
+      ctx.fillStyle = `rgba(34, 211, 238, ${beamAlpha.toFixed(2)})`;
+      ctx.beginPath();
+      ctx.moveTo(cx - 22, cy + 12);
+      ctx.lineTo(cx - 46, cy + 72);
+      ctx.lineTo(cx + 46, cy + 72);
+      ctx.lineTo(cx + 22, cy + 12);
+      ctx.closePath();
+      ctx.fill();
+
+      // Glass dome cockpit
+      ctx.fillStyle = isFlash ? '#ffffff' : 'rgba(56, 189, 248, 0.85)';
+      ctx.strokeStyle = '#bae6fd';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy - 8, 26, Math.PI, 0);
+      ctx.fill();
+      ctx.stroke();
+
+      // Metallic saucer disc
+      ctx.fillStyle = isFlash ? '#ffffff' : '#475569';
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 4, enemy.width / 2, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Running lights & side plasma turrets
+      const lights = ['#22c55e', '#38bdf8', '#facc15', '#ef4444'];
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = lights[(i + Math.floor(elapsed * 6)) % lights.length];
+        ctx.beginPath();
+        ctx.arc(cx - 27 + i * 18, cy + 4, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    }
+
+    case 'pharaoh_cat': {
+      // Golden desert pyramid aura & Nemes stripes
+      const rad = enemy.width / 2;
+      ctx.strokeStyle = isWindup ? '#fef08a' : '#f59e0b';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad + 6 + Math.sin(elapsed * 6) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Sandstorm orbiters
+      for (let i = 0; i < 3; i++) {
+        const a = elapsed * 3 + (i * Math.PI * 2) / 3;
+        ctx.fillStyle = '#fde047';
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * (rad + 14), cy + Math.sin(a) * (rad + 10), 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (textures.pharaohImg && textures.pharaohImg.complete && !isFlash) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(textures.pharaohImg, cx - rad, cy - rad, rad * 2, rad * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isFlash ? '#ffffff' : '#d97706';
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    }
+
+    case 'jester_cat': {
+      const rad = enemy.width / 2;
+      // Orbiting playing cards
+      for (let i = 0; i < 4; i++) {
+        const a = elapsed * 3.4 + (i * Math.PI) / 2;
+        const kx = cx + Math.cos(a) * (rad + 14);
+        const ky = cy + Math.sin(a) * (rad + 12);
+        ctx.save();
+        ctx.translate(kx, ky);
+        ctx.rotate(a);
+        ctx.fillStyle = i % 2 === 0 ? '#ef4444' : '#3b82f6';
+        ctx.fillRect(-5, -7, 10, 14);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(-5, -7, 10, 14);
+        ctx.restore();
+      }
+
+      ctx.strokeStyle = isWindup ? '#fde047' : '#a855f7';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad + 3, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (textures.jesterImg && textures.jesterImg.complete && !isFlash) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(textures.jesterImg, cx - rad, cy - rad, rad * 2, rad * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isFlash ? '#ffffff' : '#7e22ce';
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    }
+
+    case 'sun_cat': {
+      const rad = enemy.width / 2;
+      // Solar corona rays
+      ctx.strokeStyle = isWindup ? '#ffffff' : '#f97316';
+      ctx.lineWidth = 4;
+      for (let i = 0; i < 8; i++) {
+        const a = elapsed * 1.8 + (i * Math.PI) / 4;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * (rad + 2), cy + Math.sin(a) * (rad + 2));
+        ctx.lineTo(cx + Math.cos(a) * (rad + 18), cy + Math.sin(a) * (rad + 18));
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad + 3, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (textures.sunImg && textures.sunImg.complete && !isFlash) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(textures.sunImg, cx - rad, cy - rad, rad * 2, rad * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isFlash ? '#ffffff' : '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    }
+
+    case 'atomic_cat': {
+      const rad = enemy.width / 2;
+      // Hazard yellow-black aura
+      ctx.strokeStyle = isWindup ? '#ef4444' : '#facc15';
+      ctx.lineWidth = 4;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad + 6, elapsed * 3, elapsed * 3 + Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (textures.atomicImg && textures.atomicImg.complete && !isFlash) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(textures.atomicImg, cx - rad, cy - rad, rad * 2, rad * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isFlash ? '#ffffff' : '#eab308';
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    }
+
+    case 'party_cat': {
+      const rad = enemy.width / 2;
+      // Spinning rainbow halo
+      const colors = ['#f43f5e', '#f59e0b', '#22c55e', '#38bdf8', '#a855f7'];
+      for (let i = 0; i < 5; i++) {
+        const a = elapsed * 4 + (i * Math.PI * 2) / 5;
+        ctx.fillStyle = colors[i];
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * (rad + 10), cy + Math.sin(a) * (rad + 10), 5.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Propeller beanie on top
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 3;
+      const blade = Math.cos(elapsed * 22) * 18;
+      ctx.beginPath();
+      ctx.moveTo(cx - blade, enemy.y - 6);
+      ctx.lineTo(cx + blade, enemy.y - 6);
+      ctx.stroke();
+
+      if (textures.partyImg && textures.partyImg.complete && !isFlash) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(textures.partyImg, cx - rad, cy - rad, rad * 2, rad * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isFlash ? '#ffffff' : '#ec4899';
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    }
+
+    case 'melon_bandit': {
+      const rad = enemy.width / 2;
+      // Golden bounty poster frame behind portrait
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(cx - rad - 4, cy - rad - 4, rad * 2 + 8, rad * 2 + 8);
+      ctx.fillStyle = 'rgba(120, 53, 15, 0.78)';
+      ctx.fillRect(cx - rad - 4, cy + rad - 10, rad * 2 + 8, 16);
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('$1,000,000', cx, cy + rad + 2);
+
+      if (textures.melonImg && textures.melonImg.complete && !isFlash) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(textures.melonImg, cx - rad, cy - rad, rad * 2, rad * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isFlash ? '#ffffff' : '#16a34a';
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return true;
+    }
+
+    case 'alien_cat': {
+      const rad = enemy.width / 2;
+      // Green Martian antennae & plasma aura
+      ctx.strokeStyle = '#4ade80';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad + 3, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (textures.alienImg && textures.alienImg.complete && !isFlash) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(textures.alienImg, cx - rad, cy - rad, rad * 2, rad * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isFlash ? '#ffffff' : '#22c55e';
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
       return true;
     }
 

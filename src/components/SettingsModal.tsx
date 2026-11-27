@@ -1,5 +1,6 @@
 import React from 'react';
-import { Music, RotateCcw, Settings, Sparkles, Volume2, X } from 'lucide-react';
+import { Globe, Music, RotateCcw, Settings, Sparkles, Volume2, X } from 'lucide-react';
+import { UI_TEXT } from '../game/i18n';
 import { DEFAULT_SETTINGS } from '../game/settings';
 import { GameSettings } from '../game/types';
 
@@ -14,6 +15,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onChange,
   onClose,
 }) => {
+  const t = UI_TEXT[settings.language];
   const update = (patch: Partial<GameSettings>) => {
     onChange({ ...settings, ...patch });
   };
@@ -23,7 +25,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75"
       role="dialog"
       aria-modal="true"
-      aria-label="Настройки игры"
+      aria-label={t.settingsTitle}
     >
       <div className="w-full max-w-lg bg-[#0e172a] border border-amber-400/45 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
@@ -31,26 +33,58 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="flex items-center gap-2.5">
             <Settings className="w-5 h-5 text-amber-400" />
             <h2 className="font-display font-bold text-lg text-amber-300">
-              Настройки
+              {t.settingsTitle}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Закрыть настройки"
+            aria-label={t.closeBtn}
             className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-5 overflow-y-auto game-scroll space-y-5 text-sm">
+        <div className="p-5 overflow-y-auto game-scroll space-y-4 text-sm">
+          {/* Language Selector */}
+          <section className="flex items-center justify-between bg-slate-900/60 border border-slate-800 rounded-xl p-4">
+            <div className="flex items-center gap-2 font-semibold text-amber-200">
+              <Globe className="w-4 h-4 text-amber-400" />
+              <span>{t.languageLabel}</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
+              <button
+                type="button"
+                onClick={() => update({ language: 'en' })}
+                className={`px-3 py-1 rounded-md text-xs font-bold transition-colors cursor-pointer ${
+                  settings.language === 'en'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                onClick={() => update({ language: 'ru' })}
+                className={`px-3 py-1 rounded-md text-xs font-bold transition-colors cursor-pointer ${
+                  settings.language === 'ru'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                Русский
+              </button>
+            </div>
+          </section>
+
           {/* Music Settings */}
           <section className="space-y-3 bg-slate-900/60 border border-slate-800 rounded-xl p-4">
             <div className="flex items-center justify-between">
               <label htmlFor="setting-music-toggle" className="flex items-center gap-2 font-semibold text-amber-200 cursor-pointer">
                 <Music className="w-4 h-4 text-amber-400" />
-                <span>Музыка (в стиле Террарии)</span>
+                <span>{t.musicTerraria}</span>
               </label>
               <button
                 id="setting-music-toggle"
@@ -64,13 +98,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
               >
-                {settings.musicEnabled ? 'ВКЛ' : 'ВЫКЛ'}
+                {settings.musicEnabled ? t.on : t.off}
               </button>
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs text-slate-300 mb-1">
-                <label htmlFor="setting-music-volume">Громкость музыки</label>
+                <label htmlFor="setting-music-volume">{t.musicVolume}</label>
                 <span className="font-mono-num font-semibold text-amber-300">
                   {Math.round(settings.musicVolume * 100)}%
                 </span>
@@ -92,7 +126,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <label htmlFor="setting-sfx-toggle" className="flex items-center gap-2 font-semibold text-sky-200 cursor-pointer">
                 <Volume2 className="w-4 h-4 text-sky-400" />
-                <span>Звуковые эффекты</span>
+                <span>{t.sfxLabel}</span>
               </label>
               <button
                 id="setting-sfx-toggle"
@@ -106,13 +140,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
               >
-                {settings.sfxEnabled ? 'ВКЛ' : 'ВЫКЛ'}
+                {settings.sfxEnabled ? t.on : t.off}
               </button>
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs text-slate-300 mb-1">
-                <label htmlFor="setting-sfx-volume">Громкость эффектов</label>
+                <label htmlFor="setting-sfx-volume">{t.sfxVolume}</label>
                 <span className="font-mono-num font-semibold text-sky-300">
                   {Math.round(settings.sfxVolume * 100)}%
                 </span>
@@ -133,15 +167,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <section className="space-y-2.5 bg-slate-900/60 border border-slate-800 rounded-xl p-4">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Графика и геймплей</span>
+              <span>{t.graphicsGameplay}</span>
             </div>
 
             <div className="flex items-center justify-between py-1">
-              <span className="text-slate-200 text-xs sm:text-sm">Тряска камеры при ударах и боссах</span>
+              <span className="text-slate-200 text-xs sm:text-sm">{t.screenShake}</span>
               <button
                 type="button"
                 role="switch"
-                aria-label="Тряска камеры"
+                aria-label={t.screenShake}
                 aria-checked={settings.screenShake}
                 onClick={() => update({ screenShake: !settings.screenShake })}
                 className={`px-3 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
@@ -150,16 +184,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
               >
-                {settings.screenShake ? 'ВКЛ' : 'ВЫКЛ'}
+                {settings.screenShake ? t.on : t.off}
               </button>
             </div>
 
             <div className="flex items-center justify-between py-1">
-              <span className="text-slate-200 text-xs sm:text-sm">Частицы и искры эффектов</span>
+              <span className="text-slate-200 text-xs sm:text-sm">{t.particles}</span>
               <button
                 type="button"
                 role="switch"
-                aria-label="Частицы эффектов"
+                aria-label={t.particles}
                 aria-checked={settings.particlesEnabled}
                 onClick={() => update({ particlesEnabled: !settings.particlesEnabled })}
                 className={`px-3 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
@@ -168,16 +202,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
               >
-                {settings.particlesEnabled ? 'ВКЛ' : 'ВЫКЛ'}
+                {settings.particlesEnabled ? t.on : t.off}
               </button>
             </div>
 
             <div className="flex items-center justify-between py-1">
-              <span className="text-slate-200 text-xs sm:text-sm">Автопауза в инвентаре и сундуке</span>
+              <span className="text-slate-200 text-xs sm:text-sm">{t.autopause}</span>
               <button
                 type="button"
                 role="switch"
-                aria-label="Автопауза в меню"
+                aria-label={t.autopause}
                 aria-checked={settings.autopauseInMenus}
                 onClick={() => update({ autopauseInMenus: !settings.autopauseInMenus })}
                 className={`px-3 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
@@ -186,7 +220,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
               >
-                {settings.autopauseInMenus ? 'ВКЛ' : 'ВЫКЛ'}
+                {settings.autopauseInMenus ? t.on : t.off}
               </button>
             </div>
           </section>
@@ -200,14 +234,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Сбросить</span>
+            <span>{t.resetBtn}</span>
           </button>
           <button
             type="button"
             onClick={onClose}
             className="px-5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-bold cursor-pointer"
           >
-            Готово
+            {t.doneBtn}
           </button>
         </div>
       </div>

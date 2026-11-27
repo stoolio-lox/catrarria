@@ -1,8 +1,20 @@
-import { GameSettings } from './types';
+import { GameSettings, Language } from './types';
 
-const SETTINGS_STORAGE_KEY = 'kotarria_settings_v1';
+const SETTINGS_STORAGE_KEY = 'kotarria_settings_v2';
+
+export function detectQueryLanguage(): Language | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const param = new URLSearchParams(window.location.search).get('lang');
+    if (param === 'ru' || param === 'en') return param;
+  } catch {
+    // ignore
+  }
+  return null;
+}
 
 export const DEFAULT_SETTINGS: GameSettings = {
+  language: 'en',
   musicEnabled: true,
   musicVolume: 0.45,
   sfxEnabled: true,
@@ -18,14 +30,17 @@ export function clampVolume(val: number): number {
 }
 
 export function loadSettings(): GameSettings {
+  const queryLang = detectQueryLanguage();
   if (typeof window === 'undefined' || !window.localStorage) {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, language: queryLang ?? DEFAULT_SETTINGS.language };
   }
   try {
     const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
+    if (!raw) return { ...DEFAULT_SETTINGS, language: queryLang ?? DEFAULT_SETTINGS.language };
     const parsed = JSON.parse(raw) as Partial<GameSettings>;
+    const savedLang: Language = parsed.language === 'ru' || parsed.language === 'en' ? parsed.language : 'en';
     return {
+      language: queryLang ?? savedLang,
       musicEnabled:
         typeof parsed.musicEnabled === 'boolean'
           ? parsed.musicEnabled
@@ -56,7 +71,7 @@ export function loadSettings(): GameSettings {
           : DEFAULT_SETTINGS.autopauseInMenus,
     };
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, language: queryLang ?? DEFAULT_SETTINGS.language };
   }
 }
 
@@ -68,3 +83,4 @@ export function saveSettings(settings: GameSettings): void {
     // Ignore storage quota errors
   }
 }
+

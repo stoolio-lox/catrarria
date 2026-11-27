@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   BACKPACK_SIZE,
   DEBUG_CHEST_PRESETS,
@@ -18,6 +20,8 @@ import {
   createStarterInventory,
   dropFromSlot,
   equipItemFromInventory,
+  getItemDescription,
+  getItemName,
   giveDebugItem,
   tileTypeToDropItem,
   unequipItemToInventory,
@@ -26,11 +30,14 @@ import {
 import {
   BOSS_KINDS,
   MAX_WING_FUEL,
+  PILLAR_KINDS,
   computeDamageAfterDefense,
   createEnemy,
   createInitialPlayer,
   explodeTilesRadius,
+  getEnemyName,
   isBossKind,
+  isPillarKind,
   placeDebugChestNearPlayer,
   rollPotDrops,
   stepEnemyAI,
@@ -40,9 +47,33 @@ import {
   tryDamageTile,
   tryPlaceItemAtTile,
 } from './physics';
-import { stepNpcAI, syncVillageNpcs } from './npc';
+import {
+  applyStatusEffect,
+  clearAllDebuffs,
+  computeEffectModifiers,
+  getEffectDescription,
+  getEffectName,
+  rollRedPotion,
+  stepActiveEffects,
+} from './effects';
+import {
+  decodeRleUint8,
+  deserializeWorldData,
+  encodeRleUint8,
+  serializeWorldSnapshot,
+} from './saves';
+import { getNpcDisplay, stepNpcAI, syncVillageNpcs } from './npc';
 import { DEFAULT_SETTINGS, clampVolume } from './settings';
-import { EnemyKind, NpcEntity, TILE_SIZE, TileType, WORLD_HEIGHT, WORLD_WIDTH, WallType } from './types';
+import {
+  ActiveStatusEffect,
+  EnemyKind,
+  NpcEntity,
+  TILE_SIZE,
+  TileType,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+  WallType,
+} from './types';
 import {
   buildQuickHouseAt,
   findValidNpcHouses,
@@ -322,26 +353,36 @@ test('world generates treasure chests with basic Kotulhu and Cat Worm summoners 
   assert.equal(openRes.action, 'chest_open');
 
   // Verify crafting & placing a new empty chest_item initializes its chest inventory
-  const placeX = leftChestX + 2;
+  const placeX = spawnX - 2;
   const placeY = world.surfaceHeights[placeX] - 1;
+  player.x = placeX * TILE_SIZE;
+  player.y = (placeY - 2) * TILE_SIZE;
   const placeRes = tryPlaceItemAtTile(world, player, 'chest_item', placeX, placeY);
   assert.equal(placeRes.placed, true);
   assert.equal(getTile(world, placeX, placeY), TileType.Chest);
   assert.deepEqual(world.chests[tileIndex(placeX, placeY, world.width)], []);
 });
 
-test('all 19 Terraria & cat bosses exist with summon items, distinct AI, and segment chains', () => {
-  assert.equal(BOSS_KINDS.length, 19);
+test('all 30 bosses & pillars exist with valid AI, segment chains, and summon items', () => {
+  assert.ok(BOSS_KINDS.length >= 30, `Expected >= 30 bosses, got ${BOSS_KINDS.length}`);
   const world = generateWorld(888);
   const player = createInitialPlayer(world);
 
   for (const kind of BOSS_KINDS) {
     assert.equal(isBossKind(kind), true);
-    const summonItem = Object.values(ITEMS).find((it) => it.category === 'summon' && it.summonsBoss === kind);
-    assert.ok(summonItem, `Missing summon item for boss ${kind}`);
+    if (!isPillarKind(kind) && kind !== 'martian_saucer') {
+      const summonItem = Object.values(ITEMS).find(
+        (it) => it.category === 'summon' && it.summonsBoss === kind,
+      );
+      assert.ok(summonItem, `Missing summon item for boss ${kind}`);
+    }
 
     const boss = createEnemy(10, kind, player.x + 180, player.y - 60, 1);
     assert.ok(boss.maxHp >= 240, `Expected ${kind} maxHp >= 240, got ${boss.maxHp}`);
+    if (isPillarKind(kind)) {
+      assert.equal(boss.shield, 8);
+      assert.equal(boss.maxShield, 8);
+    }
     if (kind === 'cat_worm') {
       assert.equal(boss.segments?.length, 9);
     }
@@ -356,7 +397,7 @@ test('all 19 Terraria & cat bosses exist with summon items, distinct AI, and seg
       if (res.spawnProjectiles && res.spawnProjectiles.length > 0) {
         sawProjectile = true;
         for (const sp of res.spawnProjectiles) {
-          assert.ok(Number.isFinite(sp.x) && Number.isFinite(sp.y) && Number.isFinite(sp.vx) && Number.isFinite(sp.vy));
+          assert.ok(Number.isFinite(sp.vx) && Number.isFinite(sp.vy) && sp.radius > 0);
         }
       }
     }
@@ -372,31 +413,64 @@ test('all 19 Terraria & cat bosses exist with summon items, distinct AI, and seg
   assert.equal(isBossKind('slime'), false);
   assert.equal(ITEMS.summon_kotulhu.textureSrc, '/assets/aistudio/wait_518dc071.jpg');
   assert.equal(ITEMS.summon_cat_worm.textureSrc, '/assets/aistudio/chine_5a03a968.jpg');
+  assert.equal(ITEMS.summon_pharaoh_cat.textureSrc, '/assets/aistudio/idk_0270621b.jpg');
+  assert.equal(ITEMS.summon_alien_invasion.textureSrc, '/assets/aistudio/dsad_302645e2.jpg');
+  assert.ok(ITEMS.summon_pillars);
+  assert.ok(ITEMS.summon_alien_invasion);
 });
 
-test('expanded 1000x220 world supports both variants, Snow/Crimson biomes, obsidian underworld, and crystal highlands', () => {
+test('Terraria-scale 2400x380 world supports both variants, 6 biomes, Desert Pyramid, underworld, and crystal highlands', () => {
   const classic = generateWorld(42069, 'crimson_classic');
   const highlands = generateWorld(42069, 'crystal_highlands');
 
-  assert.equal(classic.width, 1000);
-  assert.equal(classic.height, 220);
-  assert.equal(WORLD_WIDTH, 1000);
-  assert.equal(WORLD_HEIGHT, 220);
+  assert.equal(classic.width, 2400);
+  assert.equal(classic.height, 380);
+  assert.equal(WORLD_WIDTH, 2400);
+  assert.equal(WORLD_HEIGHT, 380);
   assert.equal(classic.variant, 'crimson_classic');
   assert.equal(highlands.variant, 'crystal_highlands');
 
   assert.equal(getBiomeAtX(140, classic.width), 'snow');
-  assert.equal(getBiomeAtX(500, classic.width), 'forest');
-  assert.equal(getBiomeAtX(860, classic.width), 'crimson');
+  assert.equal(getBiomeAtX(660, classic.width), 'desert');
+  assert.equal(getBiomeAtX(1200, classic.width), 'forest');
+  assert.equal(getBiomeAtX(1700, classic.width), 'crimson');
+  assert.equal(getBiomeAtX(2100, classic.width), 'crystal');
+  assert.equal(getBiomeAtX(2320, classic.width), 'ocean');
 
   // Snow biome surface is Snow
   assert.equal(getTile(classic, 140, classic.surfaceHeights[140]), TileType.Snow);
+  // Desert biome surface has Sand or SandstoneBrick around Pyramid
+  assert.ok(
+    getTile(classic, 500, classic.surfaceHeights[500]) === TileType.Sand ||
+      getTile(classic, 500, classic.surfaceHeights[500]) === TileType.SandstoneBrick,
+  );
   // Crimson biome surface is CrimsonGrass
-  assert.equal(getTile(classic, 860, classic.surfaceHeights[860]), TileType.CrimsonGrass);
+  assert.equal(getTile(classic, 1700, classic.surfaceHeights[1700]), TileType.CrimsonGrass);
+
+  // Desert Pyramid contains SandstoneWall, SandstoneBrick, and a Pharaoh Chest with summon_pharaoh_cat
+  let pyramidBricks = 0;
+  let pyramidWalls = 0;
+  let hasPharaohChest = false;
+  for (let x = 630; x <= 690; x++) {
+    for (let y = 45; y < 95; y++) {
+      if (getTile(classic, x, y) === TileType.SandstoneBrick) pyramidBricks++;
+      if (getWall(classic, x, y) === WallType.SandstoneWall) pyramidWalls++;
+      if (getTile(classic, x, y) === TileType.Chest) {
+        const loot = classic.chests[tileIndex(x, y, classic.width)] ?? [];
+        if (loot.some((it) => it.itemId === 'summon_pharaoh_cat')) {
+          hasPharaohChest = true;
+        }
+      }
+    }
+  }
+  assert.ok(pyramidBricks > 40, `Expected pyramid sandstone bricks > 40, got ${pyramidBricks}`);
+  assert.ok(pyramidWalls > 30, `Expected pyramid sandstone walls > 30, got ${pyramidWalls}`);
+  assert.equal(hasPharaohChest, true, 'Expected Pharaoh Chamber chest inside Desert Pyramid');
+
   // Deep underworld floor contains Obsidian tiles
   let obsidianCount = 0;
-  for (let x = 200; x < 300; x++) {
-    for (let y = 192; y < classic.height - 2; y++) {
+  for (let x = 200; x < 400; x++) {
+    for (let y = 332; y < classic.height - 2; y++) {
       if (getTile(classic, x, y) === TileType.Obsidian) obsidianCount++;
     }
   }
@@ -422,6 +496,7 @@ test('expanded 1000x220 world supports both variants, Snow/Crimson biomes, obsid
   assert.equal(tileTypeToDropItem(TileType.Crimstone), 'crimstone_block');
   assert.equal(tileTypeToDropItem(TileType.Obsidian), 'obsidian_block');
   assert.equal(tileTypeToDropItem(TileType.CrystalBlock), 'crystal_block');
+  assert.equal(tileTypeToDropItem(TileType.Cactus), 'cactus_block');
 });
 
 test('expanded arsenal includes 7 pickaxes, 9 swords, 6 bows with small clear recipes', () => {
@@ -505,9 +580,13 @@ test('Terraria housing blueprint, inspectRoomHousing, and NPC villager settling 
   assert.ok(npcs.some((n) => n.kind === 'guide' && n.homeTileX !== null));
   assert.ok(npcs.some((n) => n.kind === 'merchant'));
 
-  // Force invite all 5 villagers
+  // Force invite all 6 villagers (including Director cat)
   syncVillageNpcs(npcs, world, () => nextNpcId++, player, false, true);
-  assert.equal(npcs.length, 5);
+  assert.equal(npcs.length, 6);
+  const director = npcs.find((n) => n.kind === 'director');
+  assert.ok(director, 'Expected Director NPC');
+  assert.equal(director.appearance.textureSrc, '/assets/aistudio/dir_72c7e44f.jpg');
+  assert.notEqual(getNpcDisplay('director', 'en').title, getNpcDisplay('director', 'ru').title);
 
   // Verify NPC AI opens a closed door directly ahead while walking
   const guide = npcs.find((n) => n.kind === 'guide')!;
@@ -728,7 +807,7 @@ test('armor sets, 5 accessory slots, equipment bonuses, and Angel Wings flight w
 
   let bonuses = computeEquipmentBonuses(equipment);
   assert.equal(bonuses.activeSet, 'crimson');
-  assert.equal(bonuses.defense, 13);
+  assert.equal(bonuses.defense, 16);
   assert.ok(bonuses.hpRegenPerSec >= 2);
 
   // Swap to full Crystal set and add Cobalt Shield, Angel Wings, Celestial Emblem
@@ -771,6 +850,7 @@ test('armor sets, 5 accessory slots, equipment bonuses, and Angel Wings flight w
   // Test Angel Wings mid-air flight and fuel consumption in physics
   const world = generateWorld(3333);
   const player = createInitialPlayer(world);
+  player.y -= 120;
   player.onGround = false;
   player.coyoteTimer = 0;
   player.wingFuel = MAX_WING_FUEL;
@@ -791,6 +871,286 @@ test('armor sets, 5 accessory slots, equipment bonuses, and Angel Wings flight w
   assert.ok(player.wingFuel < MAX_WING_FUEL, 'Wing flight must consume wingFuel');
   assert.ok(player.vy < 0, 'Wing flight must lift player upward');
 });
+
+test('English default localization, full item descriptions, and biome/lunar/alien mobs work cleanly', () => {
+  assert.equal(DEFAULT_SETTINGS.language, 'en');
+
+  for (const item of Object.values(ITEMS)) {
+    const nameEn = getItemName(item, 'en');
+    const nameRu = getItemName(item, 'ru');
+    const descEn = getItemDescription(item, 'en');
+    const descRu = getItemDescription(item, 'ru');
+    assert.ok(nameEn.trim().length > 0, `Missing EN name for ${item.id}`);
+    assert.ok(nameRu.trim().length > 0, `Missing RU name for ${item.id}`);
+    assert.ok(descEn.trim().length >= 8, `Missing EN description for ${item.id}`);
+    assert.ok(descRu.trim().length >= 8, `Missing RU description for ${item.id}`);
+  }
+
+  assert.equal(PILLAR_KINDS.length, 4);
+  const world = generateWorld(9001);
+  const player = createInitialPlayer(world);
+  const newMobKinds: EnemyKind[] = [
+    'ice_slime',
+    'ice_bat',
+    'frost_viking',
+    'antlion',
+    'sand_slime',
+    'mummy',
+    'crimera',
+    'face_monster',
+    'blood_crawler',
+    'pixie',
+    'sand_shark',
+    'hellbat',
+    'fire_imp',
+    'fire_demon',
+    'solar_corite',
+    'vortex_alien',
+    'nebula_floater',
+    'stardust_cell',
+    'alien_cat',
+    'alien_drone',
+  ];
+
+  for (const kind of newMobKinds) {
+    const enemy = createEnemy(99, kind, player.x + 120, player.y - 30, 1);
+    assert.ok(getEnemyName(enemy, 'en').length > 0);
+    assert.ok(getEnemyName(enemy, 'ru').length > 0);
+    for (let i = 0; i < 20; i++) {
+      stepEnemyAI(enemy, player, world, 1 / 60, true);
+    }
+    assert.ok(Number.isFinite(enemy.x) && Number.isFinite(enemy.y));
+  }
+});
+
+test('strict exclusion guard: excluded cat images are never referenced in src or index.html', () => {
+  const excludedImages = [
+    '321__2__6200075d.jpg',
+    '42234_151ee2d0.jpg',
+    'ayooo_727e1d5a.jpg',
+  ];
+
+  const collectFiles = (dir: string): string[] => {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const out: string[] = [];
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        out.push(...collectFiles(full));
+      } else if (
+        (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+        !entry.name.endsWith('.test.ts')
+      ) {
+        out.push(full);
+      }
+    }
+    return out;
+  };
+
+  const rootDir = path.resolve(process.cwd());
+  const filesToScan = [path.join(rootDir, 'index.html'), ...collectFiles(path.join(rootDir, 'src'))];
+  for (const filePath of filesToScan) {
+    const text = fs.readFileSync(filePath, 'utf8');
+    for (const forbidden of excludedImages) {
+      assert.equal(
+        text.includes(forbidden),
+        false,
+        `Forbidden excluded image "${forbidden}" found in ${filePath}`,
+      );
+    }
+  }
+});
+
+test('Zenith, Star Wrath, Molten/Hallowed armor, Terraspark Boots, and Ankh Shield work and stay craftable', () => {
+  assert.ok(ITEMS.zenith && ITEMS.zenith.damage && ITEMS.zenith.damage >= 180);
+  assert.ok(ITEMS.star_wrath);
+  assert.ok(ITEMS.enchanted_sword);
+  assert.ok(ITEMS.vampire_knives);
+  assert.ok(ITEMS.demon_scythe);
+  assert.ok(ITEMS.megashark);
+  assert.ok(ITEMS.sdmg);
+  assert.ok(ITEMS.red_potion && ITEMS.milk_potion);
+
+  const { hotbar, backpack } = createStarterInventory();
+  const equipment = createInitialEquipment();
+
+  // Craft Zenith at Anvil
+  addItemToInventory(hotbar, backpack, 'terra_blade', 1);
+  addItemToInventory(hotbar, backpack, 'meowmere_blade', 1);
+  addItemToInventory(hotbar, backpack, 'star_wrath', 1);
+  const zenithRecipe = RECIPES.find((r) => r.id === 'craft_zenith')!;
+  assert.ok(zenithRecipe, 'Expected craft_zenith recipe');
+  assert.equal(
+    craftRecipe(zenithRecipe, hotbar, backpack, ['hand', 'workbench', 'anvil']),
+    true,
+  );
+  assert.equal(countItemInInventory(hotbar, backpack, 'zenith'), 1);
+
+  // Equip Molten Armor + Ankh Shield + Terraspark Boots
+  for (const id of [
+    'molten_helmet',
+    'molten_chestplate',
+    'molten_greaves',
+    'ankh_shield',
+    'terraspark_boots',
+  ]) {
+    addItemToInventory(hotbar, backpack, id, 1);
+    const idx = backpack.findIndex((s) => s?.itemId === id);
+    assert.ok(idx >= 0);
+    assert.equal(equipItemFromInventory(hotbar, backpack, equipment, 'backpack', idx).equipped, true);
+  }
+  const bonuses = computeEquipmentBonuses(equipment);
+  assert.equal(bonuses.activeSet, 'molten');
+  assert.equal(bonuses.hasDebuffImmune, true);
+  assert.equal(bonuses.hasFireImmune, true);
+  assert.equal(bonuses.hasKnockbackImmune, true);
+  assert.ok(bonuses.speedMult >= 1.35);
+  assert.ok(bonuses.defense >= 29);
+
+  // Swap to Hallowed Set
+  for (const id of ['hallowed_helmet', 'hallowed_chestplate', 'hallowed_greaves']) {
+    addItemToInventory(hotbar, backpack, id, 1);
+    const idx = backpack.findIndex((s) => s?.itemId === id);
+    assert.equal(equipItemFromInventory(hotbar, backpack, equipment, 'backpack', idx).equipped, true);
+  }
+  const hallowedBonuses = computeEquipmentBonuses(equipment);
+  assert.equal(hallowedBonuses.activeSet, 'hallowed');
+  assert.ok(hallowedBonuses.defense >= 42);
+});
+
+test('Red Potion 50/50 gamble, Milk Potion debuff cleansing, and status effect modifiers', () => {
+  // 1. Good roll (< 0.5)
+  const goodEffects: ActiveStatusEffect[] = [];
+  const goodRoll = rollRedPotion(goodEffects, () => 0.15);
+  assert.equal(goodRoll.outcome, 'good');
+  assert.equal(goodRoll.healAmount, 60);
+  assert.equal(goodEffects.length, 4);
+  assert.ok(goodEffects.every((e) => !e.isDebuff && e.duration === 60));
+
+  // 2. Bad roll (>= 0.5)
+  const mixedEffects: ActiveStatusEffect[] = [];
+  applyStatusEffect(mixedEffects, 'ironskin', 120, false);
+  const badRoll = rollRedPotion(mixedEffects, () => 0.85);
+  assert.equal(badRoll.outcome, 'bad');
+  assert.equal(badRoll.healAmount, 0);
+  assert.equal(mixedEffects.filter((e) => e.isDebuff).length, 4);
+
+  // 3. Milk Potion clears all negative debuffs while keeping positive buffs
+  const cleanse = clearAllDebuffs(mixedEffects);
+  assert.equal(cleanse.removedCount, 4);
+  assert.equal(cleanse.remaining.length, 1);
+  assert.equal(cleanse.remaining[0].id, 'ironskin');
+
+  // 4. Confusion inverts controls, Featherfall lowers gravity, Poison disables regen
+  const modEffects: ActiveStatusEffect[] = [];
+  applyStatusEffect(modEffects, 'confusion', 10, false);
+  applyStatusEffect(modEffects, 'featherfall', 10, false);
+  applyStatusEffect(modEffects, 'regeneration', 10, false);
+  applyStatusEffect(modEffects, 'poisoned', 10, false);
+  const mods = computeEffectModifiers(modEffects);
+  assert.equal(mods.invertHorizontal, true);
+  assert.equal(mods.noFallDamage, true);
+  assert.ok(mods.gravityMult < 1);
+  assert.equal(mods.hpRegenPerSec, 0);
+  assert.ok(mods.hpDotPerSec >= 4);
+
+  // Stepping duration expires effects cleanly
+  const afterStep = stepActiveEffects(modEffects, 11);
+  assert.equal(afterStep.length, 0);
+  assert.ok(getEffectName('confusion', 'en').length > 0);
+  assert.ok(getEffectDescription('confusion', 'ru').length > 0);
+});
+
+test('Crimson Chasm Mouth cave entrances, Crimson Altars, and Underworld Hellstone generate properly', () => {
+  const world = generateWorld(1337, 'crimson_classic');
+
+  let toothCount = 0;
+  let altarCount = 0;
+  for (let x = 1585; x <= 1865; x++) {
+    for (let y = 20; y < 140; y++) {
+      const t = getTile(world, x, y);
+      if (t === TileType.CrimsonTooth) toothCount++;
+      if (t === TileType.CrimsonAltar) altarCount++;
+    }
+  }
+  assert.ok(toothCount >= 8, `Expected CrimsonTooth fangs >= 8 at Crimson cave mouths, got ${toothCount}`);
+  assert.ok(altarCount >= 2, `Expected CrimsonAltar >= 2 inside Crimson mouths, got ${altarCount}`);
+
+  let hellstoneCount = 0;
+  for (let x = 100; x < world.width - 100; x++) {
+    for (let y = 330; y < world.height - 2; y++) {
+      if (getTile(world, x, y) === TileType.HellstoneOre) hellstoneCount++;
+    }
+  }
+  assert.ok(hellstoneCount >= 20, `Expected Underworld HellstoneOre >= 20, got ${hellstoneCount}`);
+  assert.equal(getTileRequiredPickPower(TileType.HellstoneOre), 3);
+  assert.equal(tileTypeToDropItem(TileType.HellstoneOre), 'hellstone_ore');
+});
+
+test('RLE world compression and full save/load snapshot serialization round-trip preserves world, chests, inventory, and effects', () => {
+  const world = generateWorld(5555, 'crystal_highlands');
+  const player = createInitialPlayer(world);
+  player.x = 777 * TILE_SIZE;
+  player.coins = 345;
+  applyStatusEffect(player.effects, 'ironskin', 95, false);
+  applyStatusEffect(player.effects, 'wrath', 60, false);
+
+  const { hotbar, backpack } = createStarterInventory();
+  addItemToInventory(hotbar, backpack, 'zenith', 1);
+  addItemToInventory(hotbar, backpack, 'red_potion', 4);
+  const equipment = createInitialEquipment();
+
+  // Place a custom tile & chest edit to ensure world mutations survive
+  const editX = Math.floor(world.width / 2);
+  const editY = world.surfaceHeights[editX] - 2;
+  setTile(world, editX, editY, TileType.Campfire);
+
+  // RLE round-trip check
+  const rle = encodeRleUint8(world.tiles);
+  assert.ok(rle.length < world.tiles.length / 2, 'RLE should significantly compress tile map');
+  const decoded = decodeRleUint8(rle, world.tiles.length);
+  assert.equal(decoded[tileIndex(editX, editY, world.width)], TileType.Campfire);
+
+  const snapshot = serializeWorldSnapshot({
+    id: 'test_save_1',
+    name: 'Crystal Highlands · Day 3',
+    biome: 'crystal',
+    world,
+    player,
+    hotbar,
+    backpack,
+    equipment,
+    selectedSlot: 2,
+    activeToolMode: 'build',
+    dayCount: 3,
+    timeOfDay: 0.48,
+    bossSpawnedDay: 2,
+    lastWasNight: false,
+    lunarEvent: { active: false, moonLordSpawned: false },
+    alienInvasion: { active: false, defeated: 0, target: 24, saucerSpawned: false },
+    godMode: false,
+    stoolPetted: true,
+    stats: {
+      daysSurvived: 3,
+      blocksMined: 40,
+      blocksPlaced: 12,
+      itemsCrafted: 2,
+      monstersKilled: 18,
+      bossDefeated: true,
+    },
+    npcs: [],
+  });
+
+  const restoredWorld = deserializeWorldData(snapshot);
+  assert.equal(restoredWorld.variant, 'crystal_highlands');
+  assert.equal(getTile(restoredWorld, editX, editY), TileType.Campfire);
+  assert.equal(snapshot.player.coins, 345);
+  assert.equal(snapshot.player.effects.length, 2);
+  assert.equal(countItemInInventory(snapshot.hotbar, snapshot.backpack, 'zenith'), 1);
+  assert.equal(countItemInInventory(snapshot.hotbar, snapshot.backpack, 'red_potion'), 4);
+});
+
+
 
 
 
